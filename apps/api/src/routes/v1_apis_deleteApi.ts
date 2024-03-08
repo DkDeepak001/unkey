@@ -1,22 +1,17 @@
-import { cache, db, keyService } from "@/pkg/global";
 import { App } from "@/pkg/hono/app";
 import { createRoute, z } from "@hono/zod-openapi";
 
+import { rootKeyAuth } from "@/pkg/auth/root_key";
 import { UnkeyApiError, openApiErrorResponses } from "@/pkg/errors";
 import { schema } from "@unkey/db";
-import { eq } from "drizzle-orm";
+import { buildUnkeyQuery } from "@unkey/rbac";
+import { and, eq, isNull } from "drizzle-orm";
 
 const route = createRoute({
   method: "post",
   path: "/v1/apis.deleteApi",
+  security: [{ bearerAuth: [] }],
   request: {
-    headers: z.object({
-      authorization: z.string().regex(/^Bearer [a-zA-Z0-9_]+/).openapi({
-        description: "A root key to authorize the request formatted as bearer token",
-        example: "Bearer unkey_1234",
-      }),
-    }),
-
     body: {
       required: true,
       content: {
@@ -47,40 +42,100 @@ const route = createRoute({
 export type Route = typeof route;
 
 export type V1ApisDeleteApiRequest = z.infer<
-  typeof route.request.body.content["application/json"]["schema"]
+  (typeof route.request.body.content)["application/json"]["schema"]
 >;
 export type V1ApisDeleteApiResponse = z.infer<
-  typeof route.responses[200]["content"]["application/json"]["schema"]
+  (typeof route.responses)[200]["content"]["application/json"]["schema"]
 >;
 
 export const registerV1ApisDeleteApi = (app: App) =>
   app.openapi(route, async (c) => {
-    const authorization = c.req.header("authorization")!.replace("Bearer ", "");
-    const rootKey = await keyService.verifyKey(c, { key: authorization });
-    if (rootKey.error) {
-      throw new UnkeyApiError({ code: "INTERNAL_SERVER_ERROR", message: rootKey.error.message });
-    }
-    if (!rootKey.value.valid) {
-      throw new UnkeyApiError({ code: "UNAUTHORIZED", message: "the root key is not valid" });
-    }
-    if (!rootKey.value.isRootKey) {
-      throw new UnkeyApiError({ code: "UNAUTHORIZED", message: "root key required" });
-    }
-
     const { apiId } = c.req.valid("json");
+    const { cache, db, analytics } = c.get("services");
 
-    const api = await cache.withCache(c, "apiById", apiId, async () => {
+    const auth = await rootKeyAuth(
+      c,
+      buildUnkeyQuery(({ or }) => or("*", "api.*.delete_api", `api.${apiId}.delete_api`)),
+    );
+
+    const { val: api, err } = await cache.withCache(c, "apiById", apiId, async () => {
       return (
         (await db.query.apis.findFirst({
-          where: (table, { eq }) => eq(table.id, apiId),
+          where: (table, { eq, and, isNull }) => and(eq(table.id, apiId), isNull(table.deletedAt)),
         })) ?? null
       );
     });
 
-    if (!api || api.workspaceId !== rootKey.value.authorizedWorkspaceId) {
+    if (err) {
+      throw new UnkeyApiError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: `unable to load api: ${err.message}`,
+      });
+    }
+    if (!api || api.workspaceId !== auth.authorizedWorkspaceId) {
       throw new UnkeyApiError({ code: "NOT_FOUND", message: `api ${apiId} not found` });
     }
-    await db.delete(schema.apis).where(eq(schema.apis.id, apiId));
+    const authorizedWorkspaceId = auth.authorizedWorkspaceId;
+    const rootKeyId = auth.key.id;
+
+    await db.transaction(async (tx) => {
+      await tx.update(schema.apis).set({ deletedAt: new Date() }).where(eq(schema.apis.id, apiId));
+
+      await analytics.ingestAuditLogs({
+        workspaceId: authorizedWorkspaceId,
+        event: "api.delete",
+        actor: {
+          type: "key",
+          id: rootKeyId,
+        },
+        description: `Deleted ${apiId}`,
+        resources: [
+          {
+            type: "api",
+            id: apiId,
+          },
+        ],
+
+        context: { location: c.get("location"), userAgent: c.get("userAgent") },
+      });
+
+      const keyIds = await tx.query.keys.findMany({
+        where: (table, { eq, and, isNull }) =>
+          and(eq(table.keyAuthId, api.keyAuthId!), isNull(table.deletedAt)),
+        columns: {
+          id: true,
+        },
+      });
+      await tx
+        .update(schema.keys)
+        .set({ deletedAt: new Date() })
+        .where(and(eq(schema.keys.keyAuthId, api.keyAuthId!), isNull(schema.keys.deletedAt)));
+
+      await analytics.ingestAuditLogs(
+        keyIds.map((key) => ({
+          workspaceId: authorizedWorkspaceId,
+          event: "key.delete",
+          actor: {
+            type: "key",
+            id: rootKeyId,
+          },
+          description: `Deleted ${key.id} as part of ${api.id} deletion`,
+          resources: [
+            {
+              type: "keyAuth",
+              id: api.keyAuthId!,
+            },
+            {
+              type: "key",
+              id: key.id,
+            },
+          ],
+
+          context: { location: c.get("location"), userAgent: c.get("userAgent") },
+        })),
+      );
+    });
+
     await cache.remove(c, "apiById", apiId);
 
     return c.json({});

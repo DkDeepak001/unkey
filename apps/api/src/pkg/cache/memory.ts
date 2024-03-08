@@ -1,37 +1,42 @@
+import { Ok, Result } from "@unkey/error";
 import type { Context } from "hono";
-import { Cache, CacheConfig, Entry } from "./interface";
+import { Cache, CacheError, Entry } from "./interface";
+import type { CacheNamespaces } from "./namespaces";
+import { CACHE_FRESHNESS_TIME_MS, CACHE_STALENESS_TIME_MS } from "./stale-while-revalidate";
 
-export class MemoryCache<TNamespaces extends Record<string, unknown>> implements Cache<TNamespaces> {
+export class MemoryCache<TNamespaces extends Record<string, unknown> = CacheNamespaces>
+  implements Cache<TNamespaces>
+{
   private readonly state: Map<`${string}:${string}`, Entry<unknown>>;
-  private readonly config: CacheConfig;
+  public readonly tier = "memory";
 
-  constructor(config: CacheConfig) {
-    this.state = new Map();
-    this.config = config;
+  constructor(persistentMap: Map<`${string}:${string}`, Entry<unknown>>) {
+    this.state = persistentMap;
   }
 
   public get<TName extends keyof TNamespaces>(
     _c: Context,
     namespace: TName,
     key: string,
-  ): [TNamespaces[TName] | undefined, boolean] {
+  ): Result<[TNamespaces[TName] | undefined, boolean], CacheError> {
     const cached = this.state.get(`${String(namespace)}:${key}`) as
       | Entry<TNamespaces[TName]>
       | undefined;
+
     if (!cached) {
-      return [undefined, false];
+      return Ok([undefined, false]);
     }
     const now = Date.now();
 
     if (now >= cached.staleUntil) {
       this.state.delete(`${String(namespace)}:${key}`);
-      return [undefined, false];
+      return Ok([undefined, false]);
     }
     if (now >= cached.freshUntil) {
-      return [cached.value, true];
+      return Ok([cached.value, true]);
     }
 
-    return [cached.value, false];
+    return Ok([cached.value, false]);
   }
 
   public set<TName extends keyof TNamespaces>(
@@ -39,16 +44,18 @@ export class MemoryCache<TNamespaces extends Record<string, unknown>> implements
     namespace: TName,
     key: string,
     value: TNamespaces[TName],
-  ): void {
+  ): Result<void, CacheError> {
     const now = Date.now();
     this.state.set(`${String(namespace)}:${key}`, {
       value: value,
-      freshUntil: now + this.config.fresh,
-      staleUntil: now + this.config.stale,
+      freshUntil: now + CACHE_FRESHNESS_TIME_MS,
+      staleUntil: now + CACHE_STALENESS_TIME_MS,
     });
+    return Ok();
   }
 
-  public remove(_c: Context, namespace: keyof TNamespaces, key: string): void {
+  public remove(_c: Context, namespace: keyof TNamespaces, key: string): Result<void, CacheError> {
     this.state.delete(`${String(namespace)}:${key}`);
+    return Ok();
   }
 }

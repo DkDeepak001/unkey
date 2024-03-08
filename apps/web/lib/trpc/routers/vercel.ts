@@ -1,5 +1,6 @@
 import { VercelBinding, and, db, eq, schema } from "@/lib/db";
 import { env } from "@/lib/env";
+import { ingestAuditLogs } from "@/lib/tinybird";
 import { TRPCError } from "@trpc/server";
 import { newId } from "@unkey/id";
 import { newKey } from "@unkey/keys";
@@ -58,24 +59,45 @@ export const vercelRouter = t.router({
 
         const keyId = newId("key");
         const { key, hash, start } = await newKey({ prefix: "unkey", byteLength: 16 });
-        await db.insert(schema.keys).values({
-          id: keyId,
-          keyAuthId: unkeyApi.keyAuthId!,
-          name: `Vercel Integration - ${environment}`,
-          hash,
-          start,
-          ownerId: ctx.user.id,
-          workspaceId: env().UNKEY_WORKSPACE_ID,
-          forWorkspaceId: integration.workspace.id,
-          expires: null,
-          createdAt: new Date(),
-          ratelimitLimit: 10,
-          ratelimitRefillRate: 10,
-          ratelimitRefillInterval: 1000,
-          ratelimitType: "fast",
-          remaining: null,
-          totalUses: 0,
-          deletedAt: null,
+        await db.transaction(async (tx) => {
+          await tx.insert(schema.keys).values({
+            id: keyId,
+            keyAuthId: unkeyApi.keyAuthId!,
+            name: `Vercel Integration - ${environment}`,
+            hash,
+            start,
+            ownerId: ctx.user.id,
+            workspaceId: env().UNKEY_WORKSPACE_ID,
+            forWorkspaceId: integration.workspace.id,
+            expires: null,
+            createdAt: new Date(),
+            ratelimitLimit: 10,
+            ratelimitRefillRate: 10,
+            ratelimitRefillInterval: 1000,
+            ratelimitType: "fast",
+            remaining: null,
+            deletedAt: null,
+          });
+          await ingestAuditLogs({
+            workspaceId: integration.workspace.id,
+            actor: { type: "user", id: ctx.user.id },
+            event: "key.create",
+            description: `Created ${keyId}`,
+            resources: [
+              {
+                type: "key",
+                id: keyId,
+              },
+              {
+                type: "vercelIntegration",
+                id: integration.id,
+              },
+            ],
+            context: {
+              location: ctx.audit.location,
+              userAgent: ctx.audit.userAgent,
+            },
+          });
         });
 
         const setRootKeyRes = await vercel.upsertEnvironmentVariable(
@@ -85,24 +107,47 @@ export const vercelRouter = t.router({
           key,
           true,
         );
-        if (setRootKeyRes.error) {
+        if (setRootKeyRes.err) {
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: setRootKeyRes.error.message,
+            message: setRootKeyRes.err.message,
           });
         }
-        await db.insert(schema.vercelBindings).values({
-          id: newId("vercelBinding"),
-          createdAt: new Date(Date.now()),
-          updatedAt: new Date(Date.now()),
-          resourceType: "rootKey",
-          resourceId: keyId,
-          vercelEnvId: setRootKeyRes.value.created.id,
-          lastEditedBy: ctx.user.id,
-          environment: environment as VercelBinding["environment"],
-          projectId: input.projectId,
-          workspaceId: integration.workspace.id,
-          integrationId: integration.id,
+        await db.transaction(async (tx) => {
+          const vercelBindingId = newId("vercelBinding");
+          await tx.insert(schema.vercelBindings).values({
+            id: vercelBindingId,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            resourceId: keyId,
+            resourceType: "rootKey",
+            vercelEnvId: setRootKeyRes.val.created.id,
+            lastEditedBy: ctx.user.id,
+            environment: environment as VercelBinding["environment"],
+            projectId: input.projectId,
+            workspaceId: integration.workspace.id,
+            integrationId: integration.id,
+          });
+          await ingestAuditLogs({
+            workspaceId: integration.workspace.id,
+            actor: { type: "user", id: ctx.user.id },
+            event: "vercelBinding.create",
+            description: `Created ${vercelBindingId} for ${keyId}`,
+            resources: [
+              {
+                type: "vercelBinding",
+                id: vercelBindingId,
+              },
+              {
+                type: "key",
+                id: keyId,
+              },
+            ],
+            context: {
+              location: ctx.audit.location,
+              userAgent: ctx.audit.userAgent,
+            },
+          });
         });
 
         // Api Id stuff
@@ -113,25 +158,47 @@ export const vercelRouter = t.router({
           "UNKEY_API_ID",
           apiId,
         );
-        if (setApiIdRes.error) {
+        if (setApiIdRes.err) {
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: setApiIdRes.error.message,
+            message: setApiIdRes.err.message,
           });
         }
-
-        await db.insert(schema.vercelBindings).values({
-          id: newId("vercelBinding"),
-          createdAt: new Date(Date.now()),
-          updatedAt: new Date(Date.now()),
-          resourceType: "apiId",
-          resourceId: apiId,
-          vercelEnvId: setApiIdRes.value.created.id,
-          lastEditedBy: ctx.user.id,
-          environment: environment as VercelBinding["environment"],
-          projectId: input.projectId,
-          workspaceId: integration.workspace.id,
-          integrationId: integration.id,
+        await db.transaction(async (tx) => {
+          const vercelBindingId = newId("vercelBinding");
+          await tx.insert(schema.vercelBindings).values({
+            id: vercelBindingId,
+            createdAt: new Date(Date.now()),
+            updatedAt: new Date(Date.now()),
+            resourceType: "apiId",
+            resourceId: apiId,
+            vercelEnvId: setApiIdRes.val.created.id,
+            lastEditedBy: ctx.user.id,
+            environment: environment as VercelBinding["environment"],
+            projectId: input.projectId,
+            workspaceId: integration.workspace.id,
+            integrationId: integration.id,
+          });
+          await ingestAuditLogs({
+            workspaceId: integration.workspace.id,
+            actor: { type: "user", id: ctx.user.id },
+            event: "vercelBinding.create",
+            description: `Created ${vercelBindingId} for ${apiId}`,
+            resources: [
+              {
+                type: "vercelBinding",
+                id: vercelBindingId,
+              },
+              {
+                type: "api",
+                id: apiId,
+              },
+            ],
+            context: {
+              location: ctx.audit.location,
+              userAgent: ctx.audit.userAgent,
+            },
+          });
         });
       }
     }),
@@ -172,8 +239,8 @@ export const vercelRouter = t.router({
         "UNKEY_API_ID",
         input.apiId,
       );
-      if (res.error) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: res.error.message });
+      if (res.err) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: res.err.message });
       }
       const existingBinding = integration.vercelBindings.find(
         (b) =>
@@ -182,28 +249,76 @@ export const vercelRouter = t.router({
           b.resourceType === "apiId",
       );
       if (existingBinding) {
-        await db
-          .update(schema.vercelBindings)
-          .set({
-            resourceId: input.apiId,
-            vercelEnvId: res.value.created.id,
-            updatedAt: new Date(),
-            lastEditedBy: ctx.user.id,
-          })
-          .where(eq(schema.vercelBindings.id, existingBinding.id));
+        await db.transaction(async (tx) => {
+          await tx
+            .update(schema.vercelBindings)
+            .set({
+              resourceId: input.apiId,
+              vercelEnvId: res.val.created.id,
+              updatedAt: new Date(),
+              lastEditedBy: ctx.user.id,
+            })
+            .where(eq(schema.vercelBindings.id, existingBinding.id));
+          await ingestAuditLogs({
+            workspaceId: integration.workspace.id,
+            actor: { type: "user", id: ctx.user.id },
+            event: "vercelBinding.update",
+            description: `Updated ${existingBinding.id}`,
+            resources: [
+              {
+                type: "vercelBinding",
+                id: existingBinding.id,
+                meta: {
+                  vercelEnvironment: res.val.created.id,
+                },
+              },
+              {
+                type: "api",
+                id: input.apiId,
+              },
+            ],
+            context: {
+              location: ctx.audit.location,
+              userAgent: ctx.audit.userAgent,
+            },
+          });
+        });
       } else {
-        await db.insert(schema.vercelBindings).values({
-          id: newId("vercelBinding"),
-          createdAt: new Date(Date.now()),
-          updatedAt: new Date(Date.now()),
-          resourceType: "apiId",
-          resourceId: input.apiId,
-          vercelEnvId: res.value.created.id,
-          lastEditedBy: ctx.user.id,
-          environment: input.environment,
-          projectId: input.projectId,
-          workspaceId: integration.workspace.id,
-          integrationId: integration.id,
+        await db.transaction(async (tx) => {
+          const vercelBindingId = newId("vercelBinding");
+          await tx.insert(schema.vercelBindings).values({
+            id: vercelBindingId,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            resourceType: "apiId",
+            resourceId: input.apiId,
+            vercelEnvId: res.val.created.id,
+            lastEditedBy: ctx.user.id,
+            environment: input.environment,
+            projectId: input.projectId,
+            workspaceId: integration.workspace.id,
+            integrationId: integration.id,
+          });
+          await ingestAuditLogs({
+            workspaceId: integration.workspace.id,
+            actor: { type: "user", id: ctx.user.id },
+            event: "vercelBinding.create",
+            description: `Created ${vercelBindingId} for ${input.apiId}`,
+            resources: [
+              {
+                type: "vercelBinding",
+                id: vercelBindingId,
+              },
+              {
+                type: "api",
+                id: input.apiId,
+              },
+            ],
+            context: {
+              location: ctx.audit.location,
+              userAgent: ctx.audit.userAgent,
+            },
+          });
         });
       }
     }),
@@ -249,24 +364,41 @@ export const vercelRouter = t.router({
 
       const keyId = newId("key");
       const { key, hash, start } = await newKey({ prefix: "unkey", byteLength: 16 });
-      await db.insert(schema.keys).values({
-        id: keyId,
-        keyAuthId: unkeyApi.keyAuthId!,
-        name: `Vercel Integration - ${input.environment}`,
-        hash,
-        start,
-        ownerId: ctx.user.id,
-        workspaceId: env().UNKEY_WORKSPACE_ID,
-        forWorkspaceId: integration.workspace.id,
-        expires: null,
-        createdAt: new Date(),
-        ratelimitLimit: 10,
-        ratelimitRefillRate: 10,
-        ratelimitRefillInterval: 1000,
-        ratelimitType: "fast",
-        remaining: null,
-        totalUses: 0,
-        deletedAt: null,
+      await db.transaction(async (tx) => {
+        await tx.insert(schema.keys).values({
+          id: keyId,
+          keyAuthId: unkeyApi.keyAuthId!,
+          name: `Vercel Integration - ${input.environment}`,
+          hash,
+          start,
+          ownerId: ctx.user.id,
+          workspaceId: env().UNKEY_WORKSPACE_ID,
+          forWorkspaceId: integration.workspace.id,
+          expires: null,
+          createdAt: new Date(),
+          ratelimitLimit: 10,
+          ratelimitRefillRate: 10,
+          ratelimitRefillInterval: 1000,
+          ratelimitType: "fast",
+          remaining: null,
+          deletedAt: null,
+        });
+        await ingestAuditLogs({
+          workspaceId: integration.workspace.id,
+          actor: { type: "user", id: ctx.user.id },
+          event: "key.create",
+          description: `Created ${keyId}`,
+          resources: [
+            {
+              type: "key",
+              id: keyId,
+            },
+          ],
+          context: {
+            location: ctx.audit.location,
+            userAgent: ctx.audit.userAgent,
+          },
+        });
       });
 
       const res = await vercel.upsertEnvironmentVariable(
@@ -276,8 +408,8 @@ export const vercelRouter = t.router({
         key,
         true,
       );
-      if (res.error) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: res.error.message });
+      if (res.err) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: res.err.message });
       }
       const existingBinding = integration.vercelBindings.find(
         (b) =>
@@ -286,28 +418,84 @@ export const vercelRouter = t.router({
           b.resourceType === "rootKey",
       );
       if (existingBinding) {
-        await db
-          .update(schema.vercelBindings)
-          .set({
-            resourceId: keyId,
-            vercelEnvId: res.value.created.id,
-            updatedAt: new Date(),
-            lastEditedBy: ctx.user.id,
-          })
-          .where(eq(schema.vercelBindings.id, existingBinding.id));
+        await db.transaction(async (tx) => {
+          await tx
+            .update(schema.vercelBindings)
+            .set({
+              resourceId: keyId,
+              vercelEnvId: res.val.created.id,
+              updatedAt: new Date(),
+              lastEditedBy: ctx.user.id,
+            })
+            .where(eq(schema.vercelBindings.id, existingBinding.id));
+          await ingestAuditLogs({
+            workspaceId: integration.workspace.id,
+            actor: { type: "user", id: ctx.user.id },
+            event: "vercelBinding.update",
+            description: `Updated ${existingBinding.id}`,
+            resources: [
+              {
+                type: "vercelBinding",
+                id: existingBinding.id,
+                meta: {
+                  vercelEnvironment: res.val.created.id,
+                },
+              },
+              {
+                type: "key",
+                id: keyId,
+              },
+            ],
+            context: {
+              location: ctx.audit.location,
+              userAgent: ctx.audit.userAgent,
+            },
+          });
+        });
       } else {
-        await db.insert(schema.vercelBindings).values({
-          id: newId("vercelBinding"),
-          createdAt: new Date(Date.now()),
-          updatedAt: new Date(Date.now()),
-          resourceType: "rootKey",
-          resourceId: keyId,
-          vercelEnvId: res.value.created.id,
-          lastEditedBy: ctx.user.id,
-          environment: input.environment,
-          projectId: input.projectId,
-          workspaceId: integration.workspace.id,
-          integrationId: integration.id,
+        await db.transaction(async (tx) => {
+          const vercelBindingId = newId("vercelBinding");
+          await tx.insert(schema.vercelBindings).values({
+            id: vercelBindingId,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            resourceType: "rootKey",
+            resourceId: keyId,
+            vercelEnvId: res.val.created.id,
+            lastEditedBy: ctx.user.id,
+            environment: input.environment,
+            projectId: input.projectId,
+            workspaceId: integration.workspace.id,
+            integrationId: integration.id,
+          });
+          await ingestAuditLogs({
+            workspaceId: integration.workspace.id,
+            actor: { type: "user", id: ctx.user.id },
+            event: "vercelBinding.create",
+            description: `Created ${vercelBindingId} for ${keyId}`,
+            resources: [
+              {
+                type: "vercelIntegration",
+                id: integration.id,
+              },
+              {
+                type: "vercelBinding",
+                id: vercelBindingId,
+                meta: {
+                  environment: input.environment,
+                  projectId: input.projectId,
+                },
+              },
+              {
+                type: "key",
+                id: keyId,
+              },
+            ],
+            context: {
+              location: ctx.audit.location,
+              userAgent: ctx.audit.userAgent,
+            },
+          });
         });
       }
     }),
@@ -342,7 +530,28 @@ export const vercelRouter = t.router({
       });
 
       await vercel.removeEnvironmentVariable(binding.projectId, binding.vercelEnvId);
-      await db.delete(schema.vercelBindings).where(eq(schema.vercelBindings.id, binding.id));
+      await db.transaction(async (tx) => {
+        await tx
+          .update(schema.vercelBindings)
+          .set({ deletedAt: new Date() })
+          .where(eq(schema.vercelBindings.id, binding.id));
+        await ingestAuditLogs({
+          workspaceId: binding.vercelIntegrations.workspace.id,
+          actor: { type: "user", id: ctx.user.id },
+          event: "vercelBinding.delete",
+          description: `Deleted ${binding.id}`,
+          resources: [
+            {
+              type: "vercelBinding",
+              id: binding.id,
+            },
+          ],
+          context: {
+            location: ctx.audit.location,
+            userAgent: ctx.audit.userAgent,
+          },
+        });
+      });
     }),
   disconnectProject: t.procedure
     .use(auth)
@@ -378,7 +587,33 @@ export const vercelRouter = t.router({
 
       for (const binding of bindings) {
         await vercel.removeEnvironmentVariable(binding.projectId, binding.vercelEnvId);
-        await db.delete(schema.vercelBindings).where(eq(schema.vercelBindings.id, binding.id));
+        await db.transaction(async (tx) => {
+          await tx
+            .update(schema.vercelBindings)
+            .set({ deletedAt: new Date() })
+            .where(eq(schema.vercelBindings.id, binding.id));
+          await ingestAuditLogs({
+            workspaceId: integration.workspace.id,
+            actor: { type: "user", id: ctx.user.id },
+            event: "vercelBinding.delete",
+            description: `Deleted ${binding.id}`,
+            resources: [
+              {
+                type: "vercelBinding",
+                id: binding.id,
+                meta: {
+                  vercelProjectId: binding.projectId,
+                  vercelEnvironment: binding.environment,
+                  vercelEnvironmentVariableId: binding.vercelEnvId,
+                },
+              },
+            ],
+            context: {
+              location: ctx.audit.location,
+              userAgent: ctx.audit.userAgent,
+            },
+          });
+        });
       }
     }),
 });

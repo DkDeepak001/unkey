@@ -1,7 +1,7 @@
-import { cache, db, keyService } from "@/pkg/global";
 import { App } from "@/pkg/hono/app";
 import { createRoute, z } from "@hono/zod-openapi";
 
+import { rootKeyAuth } from "@/pkg/auth/root_key";
 import { UnkeyApiError, openApiErrorResponses } from "@/pkg/errors";
 import { schema } from "@unkey/db";
 import { sha256 } from "@unkey/hash";
@@ -12,13 +12,6 @@ const route = createRoute({
   method: "post",
   path: "/v1/keys",
   request: {
-    headers: z.object({
-      authorization: z.string().regex(/^Bearer [a-zA-Z0-9_]+/).openapi({
-        description: "A root key to authorize the request formatted as bearer token",
-        example: "Bearer unkey_1234",
-      }),
-    }),
-
     body: {
       required: true,
       content: {
@@ -152,38 +145,39 @@ When validating a key, we will return this back to you, so you can clearly ident
 
 export type Route = typeof route;
 export type LegacyKeysCreateKeyRequest = z.infer<
-  typeof route.request.body.content["application/json"]["schema"]
+  (typeof route.request.body.content)["application/json"]["schema"]
 >;
 export type LegacyKeysCreateKeyResponse = z.infer<
-  typeof route.responses[200]["content"]["application/json"]["schema"]
+  (typeof route.responses)[200]["content"]["application/json"]["schema"]
 >;
 
 export const registerLegacyKeysCreate = (app: App) =>
   app.openapi(route, async (c) => {
-    const authorization = c.req.header("authorization")!.replace("Bearer ", "");
-    const rootKey = await keyService.verifyKey(c, { key: authorization });
-    if (rootKey.error) {
-      throw new UnkeyApiError({ code: "INTERNAL_SERVER_ERROR", message: rootKey.error.message });
-    }
-    if (!rootKey.value.valid) {
-      throw new UnkeyApiError({ code: "UNAUTHORIZED", message: "the root key is not valid" });
-    }
-    if (!rootKey.value.isRootKey) {
-      throw new UnkeyApiError({ code: "UNAUTHORIZED", message: "root key required" });
-    }
+    const { cache, db, analytics } = c.get("services");
+    const auth = await rootKeyAuth(c);
 
     const req = c.req.valid("json");
 
-    const api = await cache.withCache(c, "apiById", req.apiId, async () => {
+    const { val: api, err } = await cache.withCache(c, "apiById", req.apiId, async () => {
       return (
         (await db.query.apis.findFirst({
-          where: (table, { eq }) => eq(table.id, req.apiId),
+          where: (table, { eq, and, isNull }) =>
+            and(eq(table.id, req.apiId), isNull(table.deletedAt)),
         })) ?? null
       );
     });
 
-    if (!api || api.workspaceId !== rootKey.value.authorizedWorkspaceId) {
-      throw new UnkeyApiError({ code: "NOT_FOUND", message: `api ${req.apiId} not found` });
+    if (err) {
+      throw new UnkeyApiError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: `unable to load api: ${err.message}`,
+      });
+    }
+    if (!api || api.workspaceId !== auth.authorizedWorkspaceId) {
+      throw new UnkeyApiError({
+        code: "NOT_FOUND",
+        message: `api ${req.apiId} not found`,
+      });
     }
 
     if (!api.keyAuthId) {
@@ -196,31 +190,60 @@ export const registerLegacyKeysCreate = (app: App) =>
     /**
      * Set up an api for production
      */
-    const key = new KeyV1({ byteLength: req.byteLength, prefix: req.prefix }).toString();
+    const key = new KeyV1({
+      byteLength: req.byteLength,
+      prefix: req.prefix,
+    }).toString();
     const start = key.slice(0, (req.prefix?.length ?? 0) + 5);
     const keyId = newId("key");
     const hash = await sha256(key.toString());
 
-    await db.insert(schema.keys).values({
-      id: keyId,
-      keyAuthId: api.keyAuthId,
-      name: req.name,
-      hash,
-      start,
-      ownerId: req.ownerId,
-      meta: JSON.stringify(req.meta ?? {}),
-      workspaceId: rootKey.value.authorizedWorkspaceId,
-      forWorkspaceId: null,
-      expires: req.expires ? new Date(req.expires) : null,
-      createdAt: new Date(),
-      ratelimitLimit: req.ratelimit?.limit,
-      ratelimitRefillRate: req.ratelimit?.refillRate,
-      ratelimitRefillInterval: req.ratelimit?.refillInterval,
-      ratelimitType: req.ratelimit?.type,
-      remaining: req.remaining,
-      totalUses: 0,
-      deletedAt: null,
+    const authorizedWorkspaceId = auth.authorizedWorkspaceId;
+    const rootKeyId = auth.key.id;
+    await db.transaction(async (tx) => {
+      await tx.insert(schema.keys).values({
+        id: keyId,
+        keyAuthId: api.keyAuthId!,
+        name: req.name,
+        hash,
+        start,
+        ownerId: req.ownerId,
+        meta: req.meta ? JSON.stringify(req.meta) : null,
+        workspaceId: authorizedWorkspaceId,
+        forWorkspaceId: null,
+        expires: req.expires ? new Date(req.expires) : null,
+        createdAt: new Date(),
+        ratelimitLimit: req.ratelimit?.limit,
+        ratelimitRefillRate: req.ratelimit?.refillRate,
+        ratelimitRefillInterval: req.ratelimit?.refillInterval,
+        ratelimitType: req.ratelimit?.type,
+        remaining: req.remaining,
+        deletedAt: null,
+      });
+
+      await analytics.ingestAuditLogs({
+        workspaceId: authorizedWorkspaceId,
+        actor: { type: "key", id: rootKeyId },
+        event: "key.create",
+        description: `Created ${keyId}`,
+        resources: [
+          {
+            type: "key",
+            id: keyId,
+          },
+          {
+            type: "keyAuth",
+            id: api.keyAuthId!,
+          },
+          { type: "api", id: api.id },
+        ],
+        context: {
+          location: c.get("location"),
+          userAgent: c.get("userAgent"),
+        },
+      });
     });
+
     // TODO: emit event to tinybird
     return c.json({
       keyId,

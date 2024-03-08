@@ -1,0 +1,17 @@
+{
+  "name": "@unkey/schema",
+  "version": "1.0.0",
+  "description": "",
+  "keywords": [],
+  "author": "Andreas Thomas",
+  "license": "AGPL-3.0"
+,
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "@unkey/tsconfig": "workspace:*",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "zod": "^3.22.4"
+  }
+}

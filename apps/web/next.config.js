@@ -1,14 +1,21 @@
-const { withContentlayer } = require("next-contentlayer");
+const MillionLint = require("@million/lint");
 
 /** @type {import('next').NextConfig} */
-let nextConfig = {
+const nextConfig = {
+  reactStrictMode: true,
   pageExtensions: ["tsx", "mdx", "ts", "js"],
-  productionBrowserSourceMaps: true, // we're open-source anyways
+  productionBrowserSourceMaps: true,
+  // we're open-source anyways
   experimental: {
     esmExternals: "loose",
   },
-
-  transpilePackages: ["@unkey/db", "@unkey/resend", "@unkey/vercel", "@unkey/result", "@unkey/id"],
+  webpack: (config) => {
+    config.cache = Object.freeze({
+      type: "memory",
+    });
+    return config;
+  },
+  transpilePackages: ["@unkey/db", "@unkey/resend", "@unkey/vercel", "@unkey/error", "@unkey/id"],
   eslint: {
     // Warning: This allows production builds to successfully complete even if
     // your project has ESLint errors.
@@ -23,9 +30,15 @@ let nextConfig = {
       source: "/docs/:match*",
       destination: "https://unkey.mintlify.dev/docs/:match*",
     },
+    {
+      source: "/engineering",
+      destination: "https://unkey-engineering.mintlify.dev/engineering",
+    },
+    {
+      source: "/engineering/:match*",
+      destination: "https://unkey-engineering.mintlify.dev/engineering/:match*",
+    },
   ],
 };
 
-nextConfig = withContentlayer(nextConfig);
-
-module.exports = nextConfig;
+module.exports = MillionLint.next()(nextConfig);

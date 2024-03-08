@@ -1,11 +1,12 @@
-import { Database, createConnection, eq, schema, sql } from "@/pkg/db";
-import type { Key } from "@unkey/db";
+import { type Database, type Key, and, createConnection, eq, gt, schema, sql } from "@/pkg/db";
+import { instrumentDO } from "@microlabs/otel-cf-workers";
 import { Env } from "../env";
 import { ConsoleLogger, Logger } from "../logging";
 import { AxiomLogger } from "../logging/axiom";
+import { traceConfig } from "../tracing/config";
 import { limitRequestSchema, revalidateRequestSchema } from "./interface";
 
-export class DurableObjectUsagelimiter {
+class DO implements DurableObject {
   private readonly state: DurableObjectState;
   private readonly db: Database;
   private lastRevalidate = 0;
@@ -83,7 +84,13 @@ export class DurableObjectUsagelimiter {
           this.db
             .update(schema.keys)
             .set({ remaining: sql`${schema.keys.remaining}-1` })
-            .where(eq(schema.keys.id, this.key.id)),
+            .where(
+              and(
+                eq(schema.keys.id, this.key.id),
+                gt(schema.keys.remaining, 0), // prevent negative remaining
+              ),
+            )
+            .execute(),
         );
         // revalidate every minute
         if (Date.now() - this.lastRevalidate > 60_000) {
@@ -94,6 +101,7 @@ export class DurableObjectUsagelimiter {
                 where: (table, { and, eq, isNull }) =>
                   and(eq(table.id, req.keyId), isNull(table.deletedAt)),
               })
+              .execute()
               .then((key) => {
                 this.key = key;
                 this.lastRevalidate = Date.now();
@@ -107,5 +115,15 @@ export class DurableObjectUsagelimiter {
         });
       }
     }
+    return new Response("invalid path", { status: 404 });
   }
 }
+
+export const DurableObjectUsagelimiter = instrumentDO(
+  DO,
+  traceConfig((env) => ({
+    name: `api.${env.ENVIRONMENT}`,
+    namespace: "DurableObjectUsagelimiter",
+    version: env.VERSION,
+  })),
+);

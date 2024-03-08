@@ -1,24 +1,19 @@
-import { cache, db, keyService } from "@/pkg/global";
 import { App } from "@/pkg/hono/app";
 import { createRoute, z } from "@hono/zod-openapi";
 
+import { rootKeyAuth } from "@/pkg/auth/root_key";
 import { UnkeyApiError, openApiErrorResponses } from "@/pkg/errors";
 import { schema } from "@unkey/db";
 import { sha256 } from "@unkey/hash";
 import { newId } from "@unkey/id";
 import { KeyV1 } from "@unkey/keys";
+import { buildUnkeyQuery } from "@unkey/rbac";
 
 const route = createRoute({
   method: "post",
   path: "/v1/keys.createKey",
+  security: [{ bearerAuth: [] }],
   request: {
-    headers: z.object({
-      authorization: z.string().regex(/^Bearer [a-zA-Z0-9_]+/).openapi({
-        description: "A root key to authorize the request formatted as bearer token",
-        example: "Bearer unkey_1234",
-      }),
-    }),
-
     body: {
       required: true,
       content: {
@@ -45,7 +40,7 @@ The underscore is automatically added if you are defining a prefix, for example:
               description: "The name for your Key. This is not customer facing.",
               example: "my key",
             }),
-            byteLength: z.number().int().min(16).max(255).optional().default(16).openapi({
+            byteLength: z.number().int().min(16).max(255).default(16).optional().openapi({
               description:
                 "The byte length used to generate your key determines its entropy as well as its length. Higher is better, but keys become longer and more annoying to handle. The default is 16 bytes, or 2^^128 possible combinations.",
               default: 16,
@@ -69,6 +64,14 @@ When validating a key, we will return this back to you, so you can clearly ident
                   trialEnds: "2023-06-16T17:16:37.161Z",
                 },
               }),
+            roles: z
+              .array(z.string().min(1).max(512))
+              .optional()
+              .openapi({
+                description:
+                  "A list of roles that this key should have. If the role does not exist, an error is thrown",
+                example: ["admin", "finance"],
+              }),
             expires: z.number().int().optional().openapi({
               description:
                 "You can auto expire keys by providing a unix timestamp in milliseconds. Once Keys expire they will automatically be disabled and are no longer valid unless you enable them again.",
@@ -85,6 +88,25 @@ When validating a key, we will return this back to you, so you can clearly ident
                 externalDocs: {
                   description: "Learn more",
                   url: "https://unkey.dev/docs/features/remaining",
+                },
+              }),
+            refill: z
+              .object({
+                interval: z.enum(["daily", "monthly"]).openapi({
+                  description: "Unkey will automatically refill verifications at the set interval.",
+                }),
+                amount: z.number().int().min(1).positive().openapi({
+                  description:
+                    "The number of verifications to refill for each occurrence is determined individually for each key.",
+                }),
+              })
+              .optional()
+              .openapi({
+                description:
+                  "Unkey enables you to refill verifications for each key at regular intervals.",
+                example: {
+                  interval: "daily",
+                  amount: 100,
                 },
               }),
             ratelimit: z
@@ -121,6 +143,25 @@ When validating a key, we will return this back to you, so you can clearly ident
                   refillInterval: 60,
                 },
               }),
+            enabled: z.boolean().default(true).optional().openapi({
+              description: "Sets if key is enabled or disabled. Disabled keys are not valid.",
+              example: false,
+            }),
+            environment: z
+              .string()
+              .max(256)
+              .optional()
+              .openapi({
+                description: `Environments allow you to divide your keyspace. 
+
+Some applications like Stripe, Clerk, WorkOS and others have a concept of "live" and "test" keys to 
+give the developer a way to develop their own application without the risk of modifying real world 
+resources.
+
+When you set an environment, we will return it back to you when validating the key, so you can
+handle it correctly.
+              `,
+              }),
           }),
         },
       },
@@ -152,38 +193,42 @@ When validating a key, we will return this back to you, so you can clearly ident
 
 export type Route = typeof route;
 export type V1KeysCreateKeyRequest = z.infer<
-  typeof route.request.body.content["application/json"]["schema"]
+  (typeof route.request.body.content)["application/json"]["schema"]
 >;
 export type V1KeysCreateKeyResponse = z.infer<
-  typeof route.responses[200]["content"]["application/json"]["schema"]
+  (typeof route.responses)[200]["content"]["application/json"]["schema"]
 >;
 
 export const registerV1KeysCreateKey = (app: App) =>
   app.openapi(route, async (c) => {
-    const authorization = c.req.header("authorization")!.replace("Bearer ", "");
-    const rootKey = await keyService.verifyKey(c, { key: authorization });
-    if (rootKey.error) {
-      throw new UnkeyApiError({ code: "INTERNAL_SERVER_ERROR", message: rootKey.error.message });
-    }
-    if (!rootKey.value.valid) {
-      throw new UnkeyApiError({ code: "UNAUTHORIZED", message: "the root key is not valid" });
-    }
-    if (!rootKey.value.isRootKey) {
-      throw new UnkeyApiError({ code: "UNAUTHORIZED", message: "root key required" });
-    }
-
     const req = c.req.valid("json");
+    const { cache, db, analytics } = c.get("services");
 
-    const api = await cache.withCache(c, "apiById", req.apiId, async () => {
+    const auth = await rootKeyAuth(
+      c,
+      buildUnkeyQuery(({ or }) => or("*", "api.*.create_key", `api.${req.apiId}.create_key`)),
+    );
+
+    const { val: api, err } = await cache.withCache(c, "apiById", req.apiId, async () => {
       return (
         (await db.query.apis.findFirst({
-          where: (table, { eq }) => eq(table.id, req.apiId),
+          where: (table, { eq, and, isNull }) =>
+            and(eq(table.id, req.apiId), isNull(table.deletedAt)),
         })) ?? null
       );
     });
+    if (err) {
+      throw new UnkeyApiError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: `unable to load api: ${err.message}`,
+      });
+    }
 
-    if (!api || api.workspaceId !== rootKey.value.authorizedWorkspaceId) {
-      throw new UnkeyApiError({ code: "NOT_FOUND", message: `api ${req.apiId} not found` });
+    if (!api || api.workspaceId !== auth.authorizedWorkspaceId) {
+      throw new UnkeyApiError({
+        code: "NOT_FOUND",
+        message: `api ${req.apiId} not found`,
+      });
     }
 
     if (!api.keyAuthId) {
@@ -192,34 +237,127 @@ export const registerV1KeysCreateKey = (app: App) =>
         message: `api ${req.apiId} is not setup to handle keys`,
       });
     }
-
+    if (req.remaining === 0) {
+      throw new UnkeyApiError({
+        code: "BAD_REQUEST",
+        message: "remaining must be greater than 0.",
+      });
+    }
+    if ((req.remaining === null || req.remaining === undefined) && req.refill?.interval) {
+      throw new UnkeyApiError({
+        code: "BAD_REQUEST",
+        message: "remaining must be set if you are using refill.",
+      });
+    }
     /**
      * Set up an api for production
      */
-    const key = new KeyV1({ byteLength: req.byteLength, prefix: req.prefix }).toString();
+    const key = new KeyV1({
+      byteLength: req.byteLength ?? 16,
+      prefix: req.prefix,
+    }).toString();
     const start = key.slice(0, (req.prefix?.length ?? 0) + 5);
     const keyId = newId("key");
     const hash = await sha256(key.toString());
 
-    await db.insert(schema.keys).values({
-      id: keyId,
-      keyAuthId: api.keyAuthId,
-      name: req.name,
-      hash,
-      start,
-      ownerId: req.ownerId,
-      meta: JSON.stringify(req.meta ?? {}),
-      workspaceId: rootKey.value.authorizedWorkspaceId,
-      forWorkspaceId: null,
-      expires: req.expires ? new Date(req.expires) : null,
-      createdAt: new Date(),
-      ratelimitLimit: req.ratelimit?.limit,
-      ratelimitRefillRate: req.ratelimit?.refillRate,
-      ratelimitRefillInterval: req.ratelimit?.refillInterval,
-      ratelimitType: req.ratelimit?.type,
-      remaining: req.remaining,
-      totalUses: 0,
-      deletedAt: null,
+    const authorizedWorkspaceId = auth.authorizedWorkspaceId;
+    const rootKeyId = auth.key.id;
+
+    let roleIds: string[] = [];
+    await db.transaction(async (tx) => {
+      if (req.roles && req.roles.length > 0) {
+        const roles = await tx.query.roles.findMany({
+          where: (table, { inArray, and, eq }) =>
+            and(eq(table.workspaceId, authorizedWorkspaceId), inArray(table.name, req.roles!)),
+        });
+        if (roles.length < req.roles.length) {
+          const missingRoles = req.roles.filter(
+            (name) => !roles.some((role) => role.name === name),
+          );
+          throw new UnkeyApiError({
+            code: "PRECONDITION_FAILED",
+            message: `Roles ${JSON.stringify(missingRoles)} are missing, please create them first`,
+          });
+        }
+        roleIds = roles.map((r) => r.id);
+      }
+      await tx.insert(schema.keys).values({
+        id: keyId,
+        keyAuthId: api.keyAuthId!,
+        name: req.name,
+        hash,
+        start,
+        ownerId: req.ownerId,
+        meta: req.meta ? JSON.stringify(req.meta) : null,
+        workspaceId: authorizedWorkspaceId,
+        forWorkspaceId: null,
+        expires: req.expires ? new Date(req.expires) : null,
+        createdAt: new Date(),
+        ratelimitLimit: req.ratelimit?.limit,
+        ratelimitRefillRate: req.ratelimit?.refillRate,
+        ratelimitRefillInterval: req.ratelimit?.refillInterval,
+        ratelimitType: req.ratelimit?.type,
+        remaining: req.remaining,
+        refillInterval: req.refill?.interval,
+        refillAmount: req.refill?.amount,
+        lastRefillAt: req.refill?.interval ? new Date() : null,
+        deletedAt: null,
+        enabled: req.enabled,
+        environment: req.environment ?? null,
+      });
+
+      await analytics.ingestAuditLogs({
+        workspaceId: authorizedWorkspaceId,
+        event: "key.create",
+        actor: {
+          type: "key",
+          id: rootKeyId,
+        },
+        description: `Created ${keyId} in ${api.keyAuthId}`,
+        resources: [
+          {
+            type: "key",
+            id: keyId,
+          },
+          {
+            type: "keyAuth",
+            id: api.keyAuthId!,
+          },
+        ],
+
+        context: { location: c.get("location"), userAgent: c.get("userAgent") },
+      });
+      if (roleIds.length > 0) {
+        await tx.insert(schema.keysRoles).values(
+          roleIds.map((roleId) => ({
+            keyId,
+            roleId,
+            workspaceId: authorizedWorkspaceId,
+          })),
+        );
+        await analytics.ingestAuditLogs(
+          roleIds.map((roleId) => ({
+            workspaceId: authorizedWorkspaceId,
+            actor: { type: "key", id: rootKeyId },
+            event: "authorization.connect_role_and_key",
+            description: `Connected ${roleId} and ${keyId}`,
+            resources: [
+              {
+                type: "key",
+                id: keyId,
+              },
+              {
+                type: "role",
+                id: roleId,
+              },
+            ],
+            context: {
+              location: c.get("location"),
+              userAgent: c.get("userAgent"),
+            },
+          })),
+        );
+      }
     });
     // TODO: emit event to tinybird
     return c.json({

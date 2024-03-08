@@ -15,13 +15,20 @@ type Props = {
 };
 
 export default async function Page(props: Props) {
+  const tenantId = getTenantId();
   const workspace = await db.query.workspaces.findFirst({
-    where: eq(schema.workspaces.tenantId, getTenantId()),
+    where: (table, { and, eq, isNull }) =>
+      and(eq(table.tenantId, tenantId), isNull(table.deletedAt)),
     with: {
-      apis: true,
+      apis: {
+        where: (table, { isNull }) => isNull(table.deletedAt),
+      },
       vercelIntegrations: {
+        where: (table, { isNull }) => isNull(table.deletedAt),
         with: {
-          vercelBindings: true,
+          vercelBindings: {
+            where: (table, { isNull }) => isNull(table.deletedAt),
+          },
         },
       },
     },
@@ -52,32 +59,38 @@ export default async function Page(props: Props) {
     teamId: integration.vercelTeamId ?? undefined,
   });
 
-  const rawProjects = await vercel.listProjects();
-  if (rawProjects.error) {
+  const { val: rawProjects, err } = await vercel.listProjects();
+  if (err) {
     return (
       <EmptyPlaceholder>
         <EmptyPlaceholder.Title>Error</EmptyPlaceholder.Title>
         <EmptyPlaceholder.Description>
           We couldn't load your projects from Vercel. Please try again or contact support.
-          <Code className="text-left">{JSON.stringify(rawProjects.error, null, 2)}</Code>
+          <Code className="text-left">{JSON.stringify(err, null, 2)}</Code>
         </EmptyPlaceholder.Description>
       </EmptyPlaceholder>
     );
   }
 
-  const apis = workspace.apis.reduce((acc, api) => {
-    acc[api.id] = api;
-    return acc;
-  }, {} as Record<string, Api>);
+  const apis = workspace.apis.reduce(
+    (acc, api) => {
+      acc[api.id] = api;
+      return acc;
+    },
+    {} as Record<string, Api>,
+  );
 
   const rootKeys = (
     await db.query.keys.findMany({
       where: eq(schema.keys.forWorkspaceId, workspace.id),
     })
-  ).reduce((acc, key) => {
-    acc[key.id] = key;
-    return acc;
-  }, {} as Record<string, Key>);
+  ).reduce(
+    (acc, key) => {
+      acc[key.id] = key;
+      return acc;
+    },
+    {} as Record<string, Key>,
+  );
 
   const users = (
     await Promise.all(
@@ -90,13 +103,16 @@ export default async function Page(props: Props) {
         };
       }),
     )
-  ).reduce((acc, user) => {
-    acc[user.id] = user;
-    return acc;
-  }, {} as Record<string, { id: string; name: string; image: string }>);
+  ).reduce(
+    (acc, user) => {
+      acc[user.id] = user;
+      return acc;
+    },
+    {} as Record<string, { id: string; name: string; image: string }>,
+  );
 
   const projects = await Promise.all(
-    rawProjects.value.map(async (p) => ({
+    rawProjects.map(async (p) => ({
       id: p.id,
       name: p.name,
       bindings: integration.vercelBindings

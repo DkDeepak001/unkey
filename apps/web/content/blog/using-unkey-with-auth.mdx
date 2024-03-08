@@ -2,12 +2,7 @@
 date: 2023-09-21
 title: "Using Unkey with your Authentication Provider"
 description: "Learn how to use Unkey with an auth provider, to associate your keys with your users."
-author:
-  {
-    name: "James Perkins",
-    role: "Co-Founder / CEO",
-    image: { src: "/james.jpg" },
-  }
+author: james
 ---
 
 When working with your external facing API and having a client application, you need to identify which user owns an API Key. Having a way to identify the user allows you to understand their usage of your product better. This blog is going to cover how you can use your authentication provider to add a way to identify the user.
@@ -475,8 +470,9 @@ The response from the API will look like this, and as you can see, we now associ
 
 In the dashboard for Unkey, you can see the key and the owner ID and the name associated with it
 
-![Unkey Dashboard](/images/blog-images/unkey-with-auth/dashboard-example.png)
+<Image src="/images/blog-images/unkey-with-auth/dashboard-example.png" alt ="Unkey Dashboard"/>
+
 
 ## Conclusion
 
-In this post, we have covered how to use Unkey with an auth provider to secure your API. We have covered how to associate a user with a key and then use that key to request our API. You can check out the code for this project here: [Example](https://github.com/unkeyed/unkey/tree/main/examples/unkey-clerk)
+In this post, we have covered how to use Unkey with an auth provider to secure your API. We have covered how to associate a user with a key and then use that key to request our API. You can check out the code for this project here: [Example](https://github.com/unkeyed/examples/tree/main/unkey-clerk)

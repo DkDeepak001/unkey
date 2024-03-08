@@ -1,5 +1,74 @@
 # @unkey/api
 
+## 0.19.3
+
+### Patch Changes
+
+- Updated dependencies [04b1785]
+  - @unkey/rbac@0.1.11
+
+## 0.19.2
+
+### Patch Changes
+
+- a2f3d7a: Include status and trace id in logs
+
+## 0.19.1
+
+### Patch Changes
+
+- d561b57: Release rbac as separate package
+- Updated dependencies [d561b57]
+  - @unkey/rbac@0.1.10
+
+## 0.19.0
+
+### Minor Changes
+
+- eddab6b: RBAC introduction
+
+## 0.18.0
+
+### Minor Changes
+
+- 2af9a51: Add permission checks
+
+## 0.17.0
+
+### Minor Changes
+
+- 9f5f3d6: Collect SDK telemetry data
+
+## 0.16.0
+
+### Minor Changes
+
+- 5de3ae76: add enabled flag
+
+## 0.15.0
+
+### Minor Changes
+
+- a1e82245: add getVerifications method
+
+## 0.14.0
+
+### Minor Changes
+
+- 2e26a07e: Add refill options
+
+## 0.13.1
+
+### Patch Changes
+
+- 153bd10: send name and version in header
+
+## 0.13.0
+
+### Minor Changes
+
+- 0bfbc54: autogenerate types
+
 ## 0.12.1
 
 ### Patch Changes

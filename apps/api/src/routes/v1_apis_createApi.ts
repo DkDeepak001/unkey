@@ -1,28 +1,23 @@
-import { db, keyService } from "@/pkg/global";
 import { App } from "@/pkg/hono/app";
 import { createRoute, z } from "@hono/zod-openapi";
 
-import { UnkeyApiError, openApiErrorResponses } from "@/pkg/errors";
+import { rootKeyAuth } from "@/pkg/auth/root_key";
+import { openApiErrorResponses } from "@/pkg/errors";
 import { schema } from "@unkey/db";
 import { newId } from "@unkey/id";
+import { buildUnkeyQuery } from "@unkey/rbac";
 
 const route = createRoute({
   method: "post",
   path: "/v1/apis.createApi",
+  security: [{ bearerAuth: [] }],
   request: {
-    headers: z.object({
-      authorization: z.string().regex(/^Bearer [a-zA-Z0-9_]+/).openapi({
-        description: "A root key to authorize the request formatted as bearer token",
-        example: "Bearer unkey_1234",
-      }),
-    }),
-
     body: {
       required: true,
       content: {
         "application/json": {
           schema: z.object({
-            name: z.string().min(1).openapi({
+            name: z.string().min(3).openapi({
               description: "The name for your API. This is not customer facing.",
               example: "my-api",
             }),
@@ -51,31 +46,31 @@ const route = createRoute({
 
 export type Route = typeof route;
 export type V1ApisCreateApiRequest = z.infer<
-  typeof route.request.body.content["application/json"]["schema"]
+  (typeof route.request.body.content)["application/json"]["schema"]
 >;
 export type V1ApisCreateApiResponse = z.infer<
-  typeof route.responses[200]["content"]["application/json"]["schema"]
+  (typeof route.responses)[200]["content"]["application/json"]["schema"]
 >;
 
 export const registerV1ApisCreateApi = (app: App) =>
   app.openapi(route, async (c) => {
-    const authorization = c.req.header("authorization")!.replace("Bearer ", "");
-    const rootKey = await keyService.verifyKey(c, { key: authorization });
-    if (rootKey.error) {
-      throw new UnkeyApiError({ code: "INTERNAL_SERVER_ERROR", message: rootKey.error.message });
-    }
-    if (!rootKey.value.valid) {
-      throw new UnkeyApiError({ code: "UNAUTHORIZED", message: "the root key is not valid" });
-    }
-    if (!rootKey.value.isRootKey) {
-      throw new UnkeyApiError({ code: "UNAUTHORIZED", message: "root key required" });
-    }
+    const { db, analytics } = c.get("services");
+
+    const auth = await rootKeyAuth(
+      c,
+      buildUnkeyQuery(({ or }) => or("*", "api.*.create_api")),
+    );
 
     const { name } = c.req.valid("json");
 
+    const authorizedWorkspaceId = auth.authorizedWorkspaceId;
+    const rootKeyId = auth.key.id;
+
     const keyAuth = {
       id: newId("keyAuth"),
-      workspaceId: rootKey.value.authorizedWorkspaceId,
+      workspaceId: auth.authorizedWorkspaceId,
+      createdAt: new Date(),
+      deletedAt: null,
     };
     await db.insert(schema.keyAuth).values(keyAuth);
 
@@ -83,12 +78,32 @@ export const registerV1ApisCreateApi = (app: App) =>
      * Set up an api for production
      */
     const apiId = newId("api");
+
     await db.insert(schema.apis).values({
       id: apiId,
       name,
-      workspaceId: rootKey.value.authorizedWorkspaceId,
+      workspaceId: authorizedWorkspaceId,
       authType: "key",
       keyAuthId: keyAuth.id,
+      createdAt: new Date(),
+      deletedAt: null,
+    });
+    await analytics.ingestAuditLogs({
+      workspaceId: authorizedWorkspaceId,
+      event: "api.create",
+      actor: {
+        type: "key",
+        id: rootKeyId,
+      },
+      description: `Created ${apiId}`,
+      resources: [
+        {
+          type: "api",
+          id: apiId,
+        },
+      ],
+
+      context: { location: c.get("location"), userAgent: c.get("userAgent") },
     });
 
     return c.json({

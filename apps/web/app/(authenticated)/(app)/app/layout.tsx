@@ -1,5 +1,5 @@
 import { getTenantId } from "@/lib/auth";
-import { db, eq, schema } from "@/lib/db";
+import { db } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { UsageBanner } from "./banner";
 import { DesktopSidebar } from "./desktop-sidebar";
@@ -12,9 +12,12 @@ export default async function Layout({ children }: LayoutProps) {
   const tenantId = getTenantId();
 
   const workspace = await db.query.workspaces.findFirst({
-    where: eq(schema.workspaces.tenantId, tenantId),
+    where: (table, { and, eq, isNull }) =>
+      and(eq(table.tenantId, tenantId), isNull(table.deletedAt)),
     with: {
-      apis: true,
+      apis: {
+        where: (table, { isNull }) => isNull(table.deletedAt),
+      },
     },
   });
   if (!workspace) {
@@ -27,7 +30,7 @@ export default async function Layout({ children }: LayoutProps) {
         <UsageBanner />
         <DesktopSidebar workspace={workspace} className="hidden lg:block" />
         <MobileSideBar className="lg:hidden" />
-        <div className="p-4 border-l bg-background border-border lg:w-full lg:p-6 lg:ml-64">
+        <div className="p-4 border-l bg-background border-border lg:w-full lg:p-8 lg:ml-64">
           {children}
         </div>
       </div>

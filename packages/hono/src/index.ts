@@ -1,6 +1,7 @@
-import { UnkeyError, verifyKey } from "@unkey/api";
+import { ErrorResponse, Unkey } from "@unkey/api";
 import type { Context, MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { version } from "../package.json";
 
 export type UnkeyContext = {
   valid: boolean;
@@ -15,10 +16,33 @@ export type UnkeyContext = {
         reset: number;
       }
     | undefined;
-  code?: "NOT_FOUND" | "RATELIMITED" | "FORBIDDEN" | "KEY_USAGE_EXCEEDED" | undefined;
+  code?:
+    | "NOT_FOUND"
+    | "RATE_LIMITED"
+    | "FORBIDDEN"
+    | "USAGE_EXCEEDED"
+    | "UNAUTHORIZED"
+    | "DISABLED"
+    | "INSUFFICIENT_PERMISSIONS"
+    | undefined;
+  environment?: string;
 };
 
-export type UnkeyConfig<TContext = Context> = {
+export type UnkeyConfig = {
+  /**
+   * The apiId to verify against. Only keys belonging to this api will be valid.
+   */
+  apiId: string;
+
+  /**
+   *
+   * By default telemetry data is enabled, and sends:
+   * runtime (Node.js / Edge)
+   * platform (Node.js / Vercel / AWS)
+   * SDK version
+   */
+  disableTelemetry?: boolean;
+
   /**
    * How to get the key from the request
    * Usually the key is provided in an `Authorization` header, but you can do what you want.
@@ -29,41 +53,48 @@ export type UnkeyConfig<TContext = Context> = {
    *
    * @default `c.req.header("Authorization")?.replace("Bearer ", "")`
    */
-  getKey?: (c: TContext) => string | undefined | Response;
+  getKey?: (c: Context) => string | undefined | Response;
 
   /**
    * Automatically return a custom response when a key is invalid
    */
-  handleInvalidKey?: (c: TContext, result: UnkeyContext) => Response | Promise<Response>;
+  handleInvalidKey?: (c: Context, result: UnkeyContext) => Response | Promise<Response>;
 
   /**
    * What to do if things go wrong
    */
-  onError?: (c: TContext, err: UnkeyError) => Response | Promise<Response>;
+  onError?: (c: Context, err: ErrorResponse["error"]) => Response | Promise<Response>;
 };
 
-export function unkey(config?: UnkeyConfig): MiddlewareHandler {
+export function unkey(config: UnkeyConfig): MiddlewareHandler {
   return async (c, next) => {
-    const key = config?.getKey
+    const key = config.getKey
       ? config.getKey(c)
       : c.req.header("Authorization")?.replace("Bearer ", "") ?? null;
     if (!key) {
       return c.json({ error: "unauthorized" }, { status: 401 });
-    } else if (typeof key !== "string") {
+    }
+    if (typeof key !== "string") {
       return key;
     }
 
-    const res = await verifyKey(key);
+    const unkeyInstance = new Unkey({
+      rootKey: "public",
+      disableTelemetry: config.disableTelemetry,
+      wrapperSdkVersion: `@unkey/hono@${version}`,
+    });
+
+    const res = await unkeyInstance.keys.verify({ key, apiId: config.apiId });
     if (res.error) {
-      if (config?.onError) {
+      if (config.onError) {
         return config.onError(c, res.error);
       }
       throw new HTTPException(500, {
-        message: `unkey error: [CODE: ${res.error.code}] - [TRACE: ${res.error.requestId}] - ${res.error.message} - read more at ${res.error.docs}`,
+        message: `unkey error: [CODE: ${res.error.code}] - [REQUEST_ID: ${res.error.requestId}] - ${res.error.message} - read more at ${res.error.docs}`,
       });
     }
 
-    if (!res.result.valid && config?.handleInvalidKey) {
+    if (!res.result.valid && config.handleInvalidKey) {
       return config.handleInvalidKey(c, res.result);
     }
 

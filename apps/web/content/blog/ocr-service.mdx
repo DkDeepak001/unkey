@@ -2,12 +2,7 @@
 date: 2023-08-10
 title: Building an OCR as a Service
 description: Learn how to use Unkey to make an Optical Character Recognition (OCR) API as a service
-author:
-  {
-    name: "Wilfred Almeida",
-    role: "Freelance Writer",
-    image: { src: "/images/blog-images/ocr-post/wilfred.jpg" },
-  }
+author: wilfred
 ---
 
 [Unkey](https://unkey.dev) is an open-source API key management tool with real-time API key creation, updating, and verification.
@@ -20,23 +15,21 @@ You can find the complete source code on [GitHub](https://github.com/WilfredAlme
 
 Signup and get started with the [Unkey](https://unkey.dev) dashboard. As soon as you create your account you will be asked to create your workspace. Give it a name, and a slug. The name is shown only to you and not to your users.
 
-Next, you need to create a root API Key, this is a special API Key that allows you full read and write access to all current and future resources. It’s important to keep this API Key safe, as it allows you to create, revoke, validate, and delete API Keys. You can do this by selecting settings and then clicking the “Create New Key” button.
-
-![Create Root Key](https://unkey.dev/images/blog-images/ai-post/create-root-key.png)
+<Image src="/images/blog-images/ai-post/create-root-key.png" alt="Create Root Key" width="1920" height="1080"/>
 
 Then you can create your first API which allows you to track usage as well as segment keys, the name you choose is also not visible to users.
 
-![Create API ](https://unkey.dev/images/blog-images/ai-post/create-api.png)
+<Image src="/images/blog-images/ai-post/create-api.png" alt="Create API" width="1920" height="1080"/>
 
 The admin dashboard gives you access to several features in a simple-to-use interface. You can create new APIs, issue keys, revoke keys and see usage stats. You can also invite other users to your account so that they can manage your APIs.
 
-![Dashboard](/images/blog-images/ocr-post/3-dashboard.png)
+<Image src="/images/blog-images/ocr-post/3-dashboard.png" alt="Dashboard" width="1920" height="1080"/>
 
 ---
 
 ## Project Walkthrough
 
-![Gif walkthrough](/images/blog-images/ocr-post/4-walkthrough.gif)
+<Image src="/images/blog-images/ocr-post/4-walkthrough.gif" alt="Walkthrough" width="1920" height="1080"/>
 
 The project is an Express API in NodeJS.
 
@@ -188,7 +181,7 @@ app.post("/signUp", async (req: Request, res: Response) => {
 
 
   const createKeyResponse = await fetch(
-    "https://api.unkey.dev/v1/keys",
+    "https://api.unkey.dev/v1/keys.createKey",
     {
       method: "POST",
       headers: myHeaders,
@@ -270,7 +263,7 @@ const verifyApiKey = async (
       });
 
       const verifyKeyResponse = await fetch(
-        "https://api.unkey.dev/v1/keys/verify",
+        "https://api.unkey.dev/v1/keys.verifyKey",
         {
           method: "POST",
           headers: myHeaders,
@@ -282,9 +275,9 @@ const verifyApiKey = async (
 
       if (
         !verifyKeyResponseJson.valid &&
-        verifyKeyResponseJson.code === "RATELIMITED"
+        verifyKeyResponseJson.code === "RATE_LIMITED"
       )
-        return res.status(429).json({ message: "RATELIMITED" });
+        return res.status(429).json({ message: "RATE_LIMITED" });
 
       if (!verifyKeyResponseJson.valid)
         return res.status(401).json({ message: "Unauthorized" });
@@ -369,8 +362,9 @@ app.post("/upgradeUser", async (req: Request, res: Response) => {
   });
 
   const updateKeyRequest = await fetch(
-    "https://api.unkey.dev/v1/keys/example_key",
+    "https://api.unkey.dev/v1/keys.updateKey",
     {
+      keyId: "example_key"
       method: "PUT",
       headers: myHeaders,
       body: raw,

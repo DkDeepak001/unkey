@@ -34,8 +34,9 @@ Verify a key from your users.
   - `NOT_FOUND` - The key does not exist
   - `FORBIDDEN` - You are not allowed to verify this key. For example because of additional security
   checks like `IP whitelists`
-  - `KEY_USAGE_EXCEEDED` - The key has been used up and is no longer valid
-  - `RATELIMITED` - The verification has been blocked due to ratelimiting
+  - `USAGE_EXCEEDED` - The key has been used up and is no longer valid
+  - `RATE_LIMITED` - The verification has been blocked due to ratelimiting
+  - `DISABLED` - the key is disabled
 </ResponseField>
 
 <ResponseField name="ownerId" type="string">
@@ -87,10 +88,12 @@ Example:
     Shows how many more times this key may be verified before being invalidated.
     Only applies to keys where you have set a `remaining` count.
     </ResponseField>
-
+<ResponseField name="enabled" type="bool" required>
+    Shows if the key is enabled or disabled.
+    </ResponseField>
 </Expandable>
 </ResponseField>
-
+ 
 <RequestExample>
 
 ```ts

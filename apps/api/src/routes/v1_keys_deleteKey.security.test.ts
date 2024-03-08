@@ -1,0 +1,33 @@
+import { schema } from "@unkey/db";
+import { sha256 } from "@unkey/hash";
+import { newId } from "@unkey/id";
+import { KeyV1 } from "@unkey/keys";
+
+import { runSharedRoleTests } from "@/pkg/testutil/test_route_roles";
+import { V1KeysDeleteKeyRequest } from "./v1_keys_deleteKey";
+
+runSharedRoleTests<V1KeysDeleteKeyRequest>({
+  prepareRequest: async (rh) => {
+    const keyId = newId("key");
+    const key = new KeyV1({ prefix: "test", byteLength: 16 }).toString();
+    await rh.db.insert(schema.keys).values({
+      id: keyId,
+      keyAuthId: rh.resources.userKeyAuth.id,
+      hash: await sha256(key),
+      start: key.slice(0, 8),
+      workspaceId: rh.resources.userWorkspace.id,
+      createdAt: new Date(),
+    });
+
+    return {
+      method: "POST",
+      url: "/v1/keys.deleteKey",
+      body: {
+        keyId,
+      },
+      headers: {
+        "Content-Type": "application/json",
+      },
+    };
+  },
+});

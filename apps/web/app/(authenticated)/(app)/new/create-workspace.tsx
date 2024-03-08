@@ -13,7 +13,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "@/components/ui/toaster";
 import { trpc } from "@/lib/trpc/client";
 import { useOrganizationList } from "@clerk/nextjs";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -32,26 +32,21 @@ export const CreateWorkspace: React.FC = () => {
   });
   const { setActive } = useOrganizationList();
 
-  const { toast } = useToast();
   const router = useRouter();
   const createWorkspace = trpc.workspace.create.useMutation({
     onSuccess: async ({ workspace, organizationId }) => {
-      toast({
-        title: "Workspace Created",
-        description: "Your workspace has been created",
-      });
+      toast.success("Your workspace has been created");
 
       if (setActive) {
         await setActive({ organization: organizationId });
       }
       router.push(`/new?workspaceId=${workspace.id}`);
     },
-    onError(_err) {
-      toast({
-        title: "Error",
-        description: "An error occured while creating your workspace, please contact support.",
-        variant: "alert",
-      });
+    onError(err) {
+      toast.error(
+        `An error occured while creating your workspace, please contact support: ${err.message}`,
+        {},
+      );
     },
   });
 

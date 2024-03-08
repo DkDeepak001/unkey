@@ -1,5 +1,6 @@
 import { ImageResponse } from "@vercel/og";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+export const runtime = "edge";
 
 const truncate = (str: string | null, length: number) => {
   if (!str || str.length <= length) {
@@ -8,18 +9,15 @@ const truncate = (str: string | null, length: number) => {
   return `${str.slice(0, length - 3)}...`;
 };
 
-export const runtime = "edge";
-export async function GET(req: NextRequest): Promise<NextResponse> {
+export async function GET(req: NextRequest): Promise<ImageResponse> {
+  const { searchParams } = new URL(req.url);
+
+  const title = searchParams.get("title") || "Changelog";
+  const date = searchParams.get("date");
   try {
     const satoshiBold = await fetch(new URL("@/styles/Satoshi-Bold.ttf", import.meta.url)).then(
       (res) => res.arrayBuffer(),
     );
-
-    const { searchParams } = new URL(req.url);
-
-    const title = searchParams.get("title") || "Changelog";
-    const date = searchParams.get("date");
-    // @ts-expect-error no idea why nextjs is complaining about this
     return new ImageResponse(
       <div
         style={{
@@ -78,7 +76,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
             <path
               d="M66.3326 24.7735H66.1061V25V62.8589C66.1061 64.7211 65.6945 66.3794 64.8761 67.8396C64.057 69.2812 62.9275 70.4097 61.4844 71.228C60.0438 72.045 58.3845 72.4565 56.5 72.4565C54.6363 72.4565 52.9766 72.0453 51.5152 71.2278C50.0722 70.4094 48.9428 69.281 48.1237 67.8393C47.3055 66.3792 46.8939 64.721 46.8939 62.8589V25V24.7735H46.6674H30H29.7735V25V64.2966C29.7735 69.0058 30.8818 73.0933 33.1071 76.5496L33.1079 76.5509C35.3512 79.9836 38.4827 82.6362 42.4947 84.5095L42.4955 84.5099C46.5078 86.3633 51.1779 87.2863 56.5 87.2863C61.7824 87.2863 66.4324 86.3632 70.4445 84.5099L70.4454 84.5095C74.4573 82.6362 77.5888 79.9836 79.8321 76.5509C82.0979 73.0945 83.2265 69.0065 83.2265 64.2966V25V24.7735H83H66.3326Z"
               stroke="url(#paint3_linear_107_29)"
-              stroke-width="0.452991"
+              strokeWidth="0.452991"
               shape-rendering="crispEdges"
             />
           </g>
@@ -207,7 +205,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       },
     );
   } catch (e) {
-    console.error(e);
-    return new NextResponse("Something went wrong");
+    console.error(`Error generating image using fallback for changelog  ${title}`, e);
+    return new ImageResponse(<img src="https://unkey.dev/images/landing/og.png" alt="Unkey" />, {
+      width: 1280,
+      height: 720,
+    });
   }
 }

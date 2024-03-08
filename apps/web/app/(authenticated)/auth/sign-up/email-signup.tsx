@@ -5,17 +5,20 @@ import * as React from "react";
 
 import { Loading } from "@/components/dashboard/loading";
 import { FadeInStagger } from "@/components/landing/fade-in";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "@/components/ui/toaster";
 import { useRouter } from "next/navigation";
 
-export function EmailSignUp(props: { verification: (value: boolean) => void }) {
+type Props = {
+  setError: (e: string | null) => void;
+  setVerification: (b: boolean) => void;
+};
+
+export const EmailSignUp: React.FC<Props> = ({ setError, setVerification }) => {
   const { signUp, isLoaded: signUpLoaded, setActive } = useSignUp();
-  const { toast } = useToast();
 
   const [isLoading, setIsLoading] = React.useState(false);
-  const [transferLoading, setTransferLoading] = React.useState(true);
+  const [_transferLoading, setTransferLoading] = React.useState(true);
   const router = useRouter();
   React.useEffect(() => {
     const signUpFromParams = async () => {
@@ -39,12 +42,13 @@ export function EmailSignUp(props: { verification: (value: boolean) => void }) {
           })
           .catch((err) => {
             setTransferLoading(false);
+            setError((err as Error).message);
             console.error(err);
           });
       }
 
       if (emailParam) {
-        props.verification(true);
+        setVerification(true);
         await signUp
           ?.create({
             emailAddress: emailParam,
@@ -52,17 +56,13 @@ export function EmailSignUp(props: { verification: (value: boolean) => void }) {
           .then(async () => {
             await signUp.prepareEmailAddressVerification();
             // set verification to true so we can show the code input
-            props.verification(true);
+            setVerification(true);
             setTransferLoading(false);
           })
           .catch((err) => {
             setTransferLoading(false);
             if (err.errors[0].code === "form_identifier_exists") {
-              toast({
-                title: "Error",
-                description: "Sorry, it looks like you have an account. Please use sign in",
-                variant: "alert",
-              });
+              toast.error("Sorry, it looks like you have an account. Please use sign in");
             } else {
               console.log("Supress error");
             }
@@ -99,22 +99,14 @@ export function EmailSignUp(props: { verification: (value: boolean) => void }) {
           await signUp.prepareEmailAddressVerification();
           setIsLoading(false);
           // set verification to true so we can show the code input
-          props.verification(true);
+          setVerification(true);
         })
         .catch((err) => {
           setIsLoading(false);
           if (err.errors[0].code === "form_identifier_exists") {
-            toast({
-              title: "Error",
-              description: "Sorry, it looks like you have an account. Please use sign in",
-              variant: "alert",
-            });
+            toast.error("Sorry, it looks like you have an account. Please use sign in");
           } else {
-            toast({
-              title: "Error",
-              description: "Sorry, We couldn't sign you up. Please try again later",
-              variant: "alert",
-            });
+            toast.error("Sorry, We couldn't sign you up. Please try again later");
           }
         });
     } catch (error) {
@@ -125,10 +117,14 @@ export function EmailSignUp(props: { verification: (value: boolean) => void }) {
 
   return (
     <FadeInStagger>
-      {!transferLoading && (
-        <form className="grid gap-2" onSubmit={signUpWithCode}>
-          <div className="grid gap-1">
-            <div className="flex flex-row gap-1 ">
+      (
+      <form className="grid gap-2" onSubmit={signUpWithCode}>
+        <div className="grid gap-4">
+          <div className="flex flex-row gap-3 ">
+            <div className="flex flex-col items-start w-1/2 gap-2">
+              <label htmlFor="first" className="text-xs text-white/50">
+                First Name
+              </label>
               <Input
                 name="first"
                 placeholder="Bruce"
@@ -136,8 +132,13 @@ export function EmailSignUp(props: { verification: (value: boolean) => void }) {
                 required
                 autoCapitalize="none"
                 autoCorrect="off"
-                className="bg-background"
+                className="h-10 text-white duration-500 bg-transparent focus:text-black border-white/20 focus:bg-white focus:border-white hover:bg-white/20 hover:border-white/40 placeholder:white/20 "
               />
+            </div>
+            <div className="flex flex-col items-start w-1/2 gap-2">
+              <label htmlFor="last" className="text-xs text-white/50">
+                Last Name
+              </label>
               <Input
                 name="last"
                 placeholder="Banner"
@@ -145,9 +146,14 @@ export function EmailSignUp(props: { verification: (value: boolean) => void }) {
                 required
                 autoCapitalize="none"
                 autoCorrect="off"
-                className="bg-background"
+                className="h-10 text-white duration-500 bg-transparent focus:text-black border-white/20 focus:bg-white focus:border-white hover:bg-white/20 hover:border-white/40 placeholder:white/20 "
               />
             </div>
+          </div>
+          <div className="flex flex-col items-start gap-2">
+            <label htmlFor="email" className="text-xs text-white/50">
+              Email
+            </label>
             <Input
               name="email"
               placeholder="name@example.com"
@@ -156,15 +162,18 @@ export function EmailSignUp(props: { verification: (value: boolean) => void }) {
               autoComplete="email"
               autoCorrect="off"
               required
-              className="bg-background"
+              className="h-10 text-white duration-500 bg-transparent focus:text-black border-white/20 focus:bg-white focus:border-white hover:bg-white/20 hover:border-white/40 placeholder:white/20 "
             />
           </div>
-          <Button disabled={isLoading}>
-            {isLoading && <Loading className="w-4 h-4 mr-2 animate-spin" />}
-            Sign Up with Email
-          </Button>
-        </form>
-      )}
+        </div>
+        <button
+          type="submit"
+          className="flex items-center justify-center h-10 gap-2 px-4 mt-8 text-sm font-semibold text-black duration-200 bg-white border border-white rounded-lg hover:border-white/30 hover:bg-black hover:text-white"
+          disabled={isLoading}
+        >
+          {isLoading ? <Loading className="w-4 h-4 animate-spin" /> : "Sign Up with Email"}
+        </button>
+      </form>
     </FadeInStagger>
   );
-}
+};

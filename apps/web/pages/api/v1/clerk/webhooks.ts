@@ -6,11 +6,12 @@ import freeDomains from "free-email-domains";
 import type { NextApiRequest, NextApiResponse } from "next";
 import type { WebhookRequiredHeaders } from "svix";
 import { Webhook } from "svix";
+
+export const maxDuration = 60;
 export const config = {
+  maxDuration: 60,
   runtime: "nodejs",
 };
-const _domain = "updates.unkey.dev";
-const _replyTo = "support@unkey.dev";
 
 const { CLERK_WEBHOOK_SECRET, RESEND_API_KEY, RESEND_AUDIENCE_ID } = env();
 export default async function handler(
@@ -44,7 +45,7 @@ export default async function handler(
     try {
       await alertSlack(email);
       await resend.client.contacts.create({
-        audience_id: RESEND_AUDIENCE_ID,
+        audienceId: RESEND_AUDIENCE_ID,
         email: email,
       });
       await resend.sendWelcomeEmail({

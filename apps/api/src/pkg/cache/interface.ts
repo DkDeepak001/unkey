@@ -1,4 +1,26 @@
+import { BaseError, Result } from "@unkey/error";
 import type { Context } from "hono";
+import { MaybePromise } from "../types/maybe";
+import type { CacheNamespaces } from "./namespaces";
+
+export class CacheError extends BaseError {
+  public readonly type = "CacheError";
+  public readonly retry = false;
+
+  public readonly namespace: keyof CacheNamespaces;
+  public readonly key: string;
+
+  constructor(opts: {
+    namespace: keyof CacheNamespaces;
+    key: string;
+    message: string;
+  }) {
+    super(opts.message);
+    this.name = "CacheError";
+    this.namespace = opts.namespace;
+    this.key = opts.key;
+  }
+}
 
 export type Entry<TValue> = {
   value: TValue;
@@ -10,21 +32,8 @@ export type Entry<TValue> = {
   staleUntil: number;
 };
 
-export type CacheConfig = {
-  /**
-   * How long an entry should be fresh in milliseconds
-   */
-  fresh: number;
-
-  /**
-   * How long an entry should be stale in milliseconds
-   *
-   * Stale entries are still valid but should be refreshed in the background
-   */
-  stale: number;
-};
-
-export interface Cache<TNamespaces extends Record<string, unknown>> {
+export interface Cache<TNamespaces extends Record<string, unknown> = CacheNamespaces> {
+  tier: string;
   /**
    * Return the cached value
    *
@@ -36,9 +45,7 @@ export interface Cache<TNamespaces extends Record<string, unknown>> {
     c: Context,
     namespace: TName,
     key: string,
-  ) =>
-    | [TNamespaces[TName] | undefined, boolean]
-    | Promise<[TNamespaces[TName] | undefined, boolean]>;
+  ) => MaybePromise<Result<[TNamespaces[TName] | undefined, boolean], CacheError>>;
 
   /**
    * Sets the value for the given key.
@@ -48,10 +55,14 @@ export interface Cache<TNamespaces extends Record<string, unknown>> {
     namespace: keyof TNamespaces,
     key: string,
     value: TNamespaces[TName],
-  ) => void;
+  ) => MaybePromise<Result<void, CacheError>>;
 
   /**
    * Removes the key from the cache.
    */
-  remove: (c: Context, namespace: keyof TNamespaces, key: string) => void;
+  remove: (
+    c: Context,
+    namespace: keyof TNamespaces,
+    key: string,
+  ) => MaybePromise<Result<void, CacheError>>;
 }

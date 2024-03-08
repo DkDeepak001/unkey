@@ -22,13 +22,13 @@
       "url": "https://unkey.dev/discord"
     },
     {
-      "name": "GitHub",
-      "url": "https://github.com/unkeyed/unkey"
+      "name": "Dashboard",
+      "url": "https://unkey.dev/app"
     }
   ],
   "topbarCtaButton": {
-    "name": "Dashboard",
-    "url": "https://unkey.dev/app"
+    "type": "github",
+    "url": "https://github.com/unkeyed/unkey"
   },
   "tabs": [
     {
@@ -66,7 +66,10 @@
           "group": "Quickstart",
           "pages": ["quickstart/nextjs", "quickstart/express", "quickstart/bun"]
         },
-        "security"
+        {
+          "group": "Security",
+          "pages": ["security/overview", "security/root-keys"]
+        }
       ]
     },
     {
@@ -75,9 +78,25 @@
         "features/ratelimiting",
         "features/temp-keys",
         "features/remaining",
-        "features/analytics"
+        "features/refill",
+        "features/analytics",
+        {
+          "group": "Authorization",
+          "pages": [
+            "features/authorization/introduction",
+            "features/authorization/roles-and-permissions",
+            "features/authorization/verifying",
+            "features/authorization/example"
+          ]
+        },
+        "features/audit-log",
+        "features/environments",
+        "features/whitelist",
+        "features/revocation",
+        "features/enabled"
       ]
     },
+
     {
       "group": "Integrations",
       "icon": "bolt",
@@ -87,20 +106,20 @@
       "group": "API Documentation",
       "icon": "code",
       "pages": [
+        "api-reference/overview",
         "api-reference/authentication",
         {
           "group": "Errors",
           "pages": [
             "api-reference/errors/introduction",
             "api-reference/errors/code/BAD_REQUEST",
+            "api-reference/errors/code/UNAUTHORIZED",
             "api-reference/errors/code/FORBIDDEN",
-            "api-reference/errors/code/INTERNAL_SERVER_ERROR",
-            "api-reference/errors/code/INVALID_KEY_TYPE",
-            "api-reference/errors/code/KEY_USAGE_EXCEEDED",
             "api-reference/errors/code/NOT_FOUND",
-            "api-reference/errors/code/NOT_UNIQUE",
-            "api-reference/errors/code/RATELIMITED",
-            "api-reference/errors/code/UNAUTHORIZED"
+            "api-reference/errors/code/CONFLICT",
+            "api-reference/errors/code/DISABLED",
+            "api-reference/errors/code/TOO_MANY_REQUESTS",
+            "api-reference/errors/code/INTERNAL_SERVER_ERROR"
           ]
         },
         {
@@ -110,12 +129,19 @@
             "api-reference/keys/verify",
             "api-reference/keys/get",
             "api-reference/keys/update",
-            "api-reference/keys/delete"
+            "api-reference/keys/update-remaining",
+            "api-reference/keys/delete",
+            "api-reference/keys/verifications"
           ]
         },
         {
           "group": "APIs",
-          "pages": ["api-reference/apis/get", "api-reference/apis/list-keys"]
+          "pages": [
+            "api-reference/apis/create",
+            "api-reference/apis/get",
+            "api-reference/apis/list-keys",
+            "api-reference/apis/delete"
+          ]
         }
       ]
     },
@@ -133,15 +159,21 @@
                 "libraries/ts/sdk/keys/create",
                 "libraries/ts/sdk/keys/verify",
                 "libraries/ts/sdk/keys/update",
-                "libraries/ts/sdk/keys/revoke"
+                "libraries/ts/sdk/keys/delete"
               ]
             },
             {
               "group": "APIs",
-              "pages": ["libraries/ts/sdk/apis/get", "libraries/ts/sdk/apis/list-keys"]
+              "pages": [
+                "libraries/ts/sdk/apis/create",
+                "libraries/ts/sdk/apis/get",
+                "libraries/ts/sdk/apis/list-keys",
+                "libraries/ts/sdk/apis/delete"
+              ]
             }
           ]
         },
+        "libraries/ts/nextjs",
         "libraries/ts/hono"
       ]
     },
@@ -166,8 +198,9 @@
           "pages": [
             "libraries/ex/functions/create_key",
             "libraries/ex/functions/verify_key",
-            "libraries/ex/functions/revoke_key",
-            "libraries/ex/functions/update_key"
+            "libraries/ex/functions/delete_key",
+            "libraries/ex/functions/update_key",
+            "libraries/ex/functions/update_remaining"
           ]
         }
       ]
@@ -221,7 +254,9 @@
       "pages": [
         "contributing/getting-started",
         "contributing/versions",
-        "contributing/editor-setup"
+        "contributing/editor-setup",
+        "contributing/testing",
+        "contributing/sdk-development"
       ]
     }
   ],
@@ -229,11 +264,13 @@
     "twitter": "https://twitter.com/unkeydev",
     "github": "https://github.com/unkeyed/unkey"
   },
-  "openapi": "https://api.unkey.app/openapi.json",
+  "openapi": "https://api.unkey.dev/openapi.json",
   "api": {
-    "baseUrl": "https://api.unkey.app",
-    "auth": {
-      "method": "bearer"
+    "baseUrl": "https://api.unkey.dev"
+  },
+  "analytics": {
+    "posthog": {
+      "apiKey": "phc_kCLW6KdzuihzMqTuJ6PNC4sHP7ipArtEAF8uUH2V5Yt"
     }
   }
 }

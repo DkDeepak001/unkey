@@ -1,9 +1,9 @@
 import { Container } from "@/components/landing/container";
-import { allJobs } from "contentlayer/generated";
-import { useMDXComponent } from "next-contentlayer/hooks";
 import { redirect } from "next/navigation";
 import React from "react";
 
+import { MdxContent } from "@/components/landing/mdx-content";
+import { JOBS_PATH, getFilePaths, getJob } from "@/lib/mdx-helper";
 import { ArrowLeft, Banknote, BarChart, Cake, Globe, LucideIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -14,56 +14,71 @@ type Props = {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   // read route params
-  const job = allJobs.find((j) => j.slug === params.slug && j.visible);
+  const { frontmatter } = await getJob(params.slug);
   const baseUrl = process.env.VERCEL_URL
     ? `https://${process.env.VERCEL_URL}`
     : "http://localhost:3000";
+  const ogUrl = new URL("/og/careers", baseUrl);
+
+  ogUrl.searchParams.set("title", frontmatter.title ?? "");
 
   return {
-    title: `${job?.title} | Unkey`,
-    description: job?.description,
+    title: `${frontmatter?.title} | Unkey`,
+    description: frontmatter?.description,
     openGraph: {
-      title: `${job?.title} | Unkey`,
-      description: job?.description,
-      url: `${baseUrl}/careers/${job?.slug}`,
-      siteName: "unkey.dev",
+      title: `${frontmatter?.title} | Unkey`,
+      description: frontmatter?.description,
+      url: `https://unkey.dev/careers/${params.slug}`,
       images: [
         {
-          url: `${baseUrl}/og/changelog?title=${job?.title}`,
+          url: ogUrl.toString(),
           width: 1200,
-          height: 675,
+          height: 630,
+          alt: frontmatter.title,
         },
       ],
     },
     twitter: {
-      title: `${job?.title} | Unkey`,
       card: "summary_large_image",
+      title: `${frontmatter?.title} | Unkey`,
+      description: frontmatter?.description,
+      site: "@unkeydev",
+      creator: "@unkeydev",
+      images: [
+        {
+          url: ogUrl.toString(),
+          width: 1200,
+          height: 630,
+          alt: frontmatter.title,
+        },
+      ],
     },
     icons: {
-      shortcut: "/unkey.png",
+      shortcut: "/images/landing/unkey.png",
     },
   };
 }
 
-export const generateStaticParams = async () =>
-  allJobs.map((j) => ({
-    slug: j.slug,
-  }));
+export const generateStaticParams = async () => {
+  const posts = await getFilePaths(JOBS_PATH);
+  // Remove file extensions for page paths
+  posts.map((path) => path.replace(/\.mdx?$/, "")).map((slug) => ({ params: { slug } }));
+  return posts;
+};
 
-export default function JobPage({ params }: { params: { slug: string } }) {
-  const job = allJobs.find((j) => j.slug === params.slug && j.visible);
+export default async function JobPage({ params }: { params: { slug: string } }) {
+  const { frontmatter, serialized } = await getJob(params.slug);
 
-  if (!job) {
+  if (!frontmatter.visible) {
     redirect("/careers");
   }
 
   const perks: Record<string, LucideIcon> = {
     "Remote Anywhere": Globe,
-    [job.salary]: Banknote,
+    [frontmatter.salary]: Banknote,
     "Stock Options": BarChart,
     "Unlimited PTO": Cake,
   };
-  const Content = useMDXComponent(job.body.code);
 
   return (
     <Container>
@@ -77,9 +92,9 @@ export default function JobPage({ params }: { params: { slug: string } }) {
           </Link>
           <div className="mt-4 pb-10">
             <h2 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-6xl">
-              {job.title}
+              {frontmatter.title}
             </h2>
-            <p className="mt-2 text-gray-500">{job.description}</p>
+            <p className="mt-2 text-gray-500">{frontmatter.description}</p>
           </div>
           <div className="flex items-center justify-between gap-4">
             <Link
@@ -102,7 +117,7 @@ export default function JobPage({ params }: { params: { slug: string } }) {
         </div>
 
         <div className="prose lg:prose-md w-full border-gray-100 lg:w-3/5 lg:border-l lg:pl-8">
-          <Content />
+          <MdxContent source={serialized} />
         </div>
       </div>
     </Container>

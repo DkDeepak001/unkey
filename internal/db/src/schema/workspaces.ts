@@ -1,7 +1,7 @@
+import type { Subscriptions } from "@unkey/billing";
 import { relations } from "drizzle-orm";
 import {
   datetime,
-  int,
   json,
   mysqlEnum,
   mysqlTable,
@@ -9,8 +9,8 @@ import {
   varchar,
 } from "drizzle-orm/mysql-core";
 import { apis } from "./apis";
-import { auditLogs } from "./audit";
 import { keys } from "./keys";
+import { permissions, roles } from "./rbac";
 import { vercelBindings, vercelIntegrations } from "./vercel_integration";
 
 export const workspaces = mysqlTable(
@@ -21,7 +21,9 @@ export const workspaces = mysqlTable(
     // This can be either a user_xxx or org_xxx id
     tenantId: varchar("tenant_id", { length: 256 }).notNull(),
     name: varchar("name", { length: 256 }).notNull(),
-    slug: varchar("slug", { length: 256 }),
+
+    createdAt: datetime("created_at", { fsp: 3 }),
+    deletedAt: datetime("deleted_at", { fsp: 3 }),
 
     // different plans, this should only be used for visualisations in the ui
     plan: mysqlEnum("plan", ["free", "pro", "enterprise"]).default("free"),
@@ -32,17 +34,6 @@ export const workspaces = mysqlTable(
 
     // null means there was no trial
     trialEnds: datetime("trial_ends", { fsp: 3 }),
-    // if null, you should fall back to start of month
-    billingPeriodStart: datetime("billing_period_start", { fsp: 3 }),
-    // if null, you should fall back to end of month
-    billingPeriodEnd: datetime("billing_period_end", { fsp: 3 }),
-
-    // quotas and usage
-    maxActiveKeys: int("quota_max_active_keys"),
-    usageActiveKeys: int("usage_active_keys"),
-    maxVerifications: int("quota_max_verifications"),
-    usageVerifications: int("usage_verifications"),
-    lastUsageUpdate: datetime("last_usage_update", { fsp: 3 }),
 
     /**
      * feature flags
@@ -51,48 +42,47 @@ export const workspaces = mysqlTable(
      */
     betaFeatures: json("beta_features")
       .$type<{
-        auditLog?: boolean;
+        /**
+         * enable audit log retention by specifiying the number of days
+         * undefined, 0 or negative means it's disabled
+         */
+        auditLogRetentionDays?: number;
+
+        /**
+         * Can access /app/authorization pages
+         */
+        rbac?: boolean;
       }>()
       .notNull(),
     features: json("features")
       .$type<{
-        auditLog?: boolean;
+        /**
+         * enable audit log retention by specifiying the number of days
+         * undefined, 0 or negative means it's disabled
+         */
+        auditLogRetentionDays?: number;
+
+        /**
+         * Can access /app/success
+         */
+        successPage?: boolean;
+
+        ipWhitelist?: boolean;
       }>()
       .notNull(),
     // prevent plan changes for a certain time, should be 1 day
     // deprecated, use planChanged
     planLockedUntil: datetime("plan_locked_until", { fsp: 3 }),
+    /**
+     * If a user requests to downgrade, we mark the workspace and downgrade it after the next
+     * billing happened.
+     */
+    planDowngradeRequest: mysqlEnum("plan_downgrade_request", ["free"]),
     planChanged: datetime("plan_changed", { fsp: 3 }),
-    subscriptions: json("subscriptions").$type<{
-      activeKeys?: {
-        productId: string;
-        tiers: {
-          firstUnit: number;
-          lastUnit: number | null; // null means unlimited
-          perUnit: number; // $ 0.01
-        }[];
-      };
-      verifications?: {
-        productId: string;
-        tiers: {
-          firstUnit: number;
-          lastUnit: number | null; // null means unlimited
-          perUnit: number; // $ 0.01
-        }[];
-      };
-      plan?: {
-        productId: string;
-        price: number; // $ 25
-      };
-      support?: {
-        productId: string;
-        price: number; // $ 125
-      };
-    }>(),
+    subscriptions: json("subscriptions").$type<Subscriptions>(),
   },
   (table) => ({
     tenantIdIdx: uniqueIndex("tenant_id_idx").on(table.tenantId),
-    slugIdx: uniqueIndex("slug_idx").on(table.slug),
   }),
 );
 
@@ -107,5 +97,6 @@ export const workspacesRelations = relations(workspaces, ({ many }) => ({
   vercelBindings: many(vercelBindings, {
     relationName: "vercel_key_binding_relation",
   }),
-  auditLogs: many(auditLogs),
+  roles: many(roles),
+  permissions: many(permissions),
 }));

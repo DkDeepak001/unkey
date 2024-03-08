@@ -1,74 +1,87 @@
 import { Metrics } from "@/pkg/metrics";
+import { Result } from "@unkey/error";
 import { Context } from "hono";
-import { Cache } from "./interface";
-
-type Tier = "memory" | "zone";
-
-export class CacheWithMetrics<TNamespaces extends Record<string, unknown>> {
+import { Cache, CacheError } from "./interface";
+import { CacheNamespaces } from "./namespaces";
+export class CacheWithMetrics<TNamespaces extends Record<string, unknown> = CacheNamespaces>
+  implements Cache<TNamespaces>
+{
   private cache: Cache<TNamespaces>;
   private readonly metrics: Metrics | undefined = undefined;
-  private readonly tier: Tier;
 
-  constructor(opts: {
+  private constructor(opts: {
     cache: Cache<TNamespaces>;
-    tier: Tier;
     metrics?: Metrics;
   }) {
     this.cache = opts.cache;
-    this.tier = opts.tier;
     this.metrics = opts.metrics;
   }
+  static wrap<TNamespaces extends Record<string, unknown>>(
+    cache: Cache<TNamespaces>,
+    metrics: Metrics,
+  ): Cache<TNamespaces> {
+    return new CacheWithMetrics<TNamespaces>({ cache, metrics });
+  }
 
+  public get tier() {
+    return this.cache.tier;
+  }
   public async get<TName extends keyof TNamespaces>(
     c: Context,
     namespace: TName,
     key: string,
-  ): Promise<[TNamespaces[TName] | undefined, boolean]> {
+  ): Promise<Result<[TNamespaces[TName] | undefined, boolean], CacheError>> {
     const start = performance.now();
-    const [cached, stale] = await this.cache.get(c, namespace, key);
-    const latency = performance.now() - start;
-    c.res.headers.append(
-      "Unkey-Latency",
-      `cache-${String(namespace)}-${this.tier}=${
-        typeof cached !== "undefined" ? "hit" : "miss"
-      }@${latency}ms`,
-    );
+    const res = await this.cache.get(c, namespace, key);
+    if (res.err) {
+      return res;
+    }
+    const [cached, stale] = res.val;
+
     if (this.metrics) {
-      this.metrics.emit("metric.cache.read", {
+      this.metrics.emit({
+        metric: "metric.cache.read",
         hit: typeof cached !== "undefined",
+        stale: stale,
         latency: performance.now() - start,
         tier: this.tier,
         namespace: String(namespace),
         key,
       });
     }
-    return [cached, stale];
+    return res;
   }
 
-  set<TName extends keyof TNamespaces>(
+  public async set<TName extends keyof TNamespaces>(
     c: Context,
     namespace: TName,
     key: string,
     value: TNamespaces[TName],
-  ): void {
+  ): Promise<Result<void, CacheError>> {
     if (this.metrics) {
-      this.metrics.emit("metric.cache.write", {
+      this.metrics.emit({
+        metric: "metric.cache.write",
         tier: this.tier,
         namespace: String(namespace),
         key,
       });
     }
-    this.cache.set(c, namespace, key, value);
+    return this.cache.set(c, namespace, key, value);
   }
 
-  remove<TName extends keyof TNamespaces>(c: Context, namespace: TName, key: string) {
+  public async remove<TName extends keyof TNamespaces>(
+    c: Context,
+    namespace: TName,
+    key: string,
+  ): Promise<Result<void, CacheError>> {
     if (this.metrics) {
-      this.metrics.emit("metric.cache.purge", {
+      this.metrics.emit({
+        metric: "metric.cache.purge",
         tier: this.tier,
         namespace: String(namespace),
         key,
       });
     }
-    this.cache.remove(c, namespace, key);
+    return this.cache.remove(c, namespace, key);
   }
 }

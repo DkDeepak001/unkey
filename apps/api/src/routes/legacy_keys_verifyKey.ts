@@ -1,5 +1,4 @@
 import { UnkeyApiError, openApiErrorResponses } from "@/pkg/errors";
-import { keyService } from "@/pkg/global";
 import { type App } from "@/pkg/hono/app";
 import { createRoute, z } from "@hono/zod-openapi";
 
@@ -65,7 +64,7 @@ A key could be invalid for a number of reasons, for example if it has expired, h
                   stripeCustomerId: "cus_1234",
                 },
               }),
-            createdAt: z.number().openapi({
+            createdAt: z.number().optional().openapi({
               description: "The unix timestamp in milliseconds when the key was created",
               example: Date.now(),
             }),
@@ -110,15 +109,24 @@ A key could be invalid for a number of reasons, for example if it has expired, h
               example: 1000,
             }),
             code: z
-              .enum(["NOT_FOUND", "FORBIDDEN", "KEY_USAGE_EXCEEDED", "RATELIMITED"])
+              .enum([
+                "NOT_FOUND",
+                "FORBIDDEN",
+                "USAGE_EXCEEDED",
+                "RATE_LIMITED",
+                "UNAUTHORIZED",
+                "DISABLED",
+                "INSUFFICIENT_PERMISSIONS",
+              ])
               .optional()
               .openapi({
                 description: `If the key is invalid this field will be set to the reason why it is invalid.
 Possible values are:
 - NOT_FOUND: the key does not exist or has expired
 - FORBIDDEN: the key is not allowed to access the api
-- KEY_USAGE_EXCEEDED: the key has exceeded its request limit
-- RATELIMITED: the key has been ratelimited,
+- USAGE_EXCEEDED: the key has exceeded its request limit
+- RATE_LIMITED: the key has been ratelimited,
+- INSUFFICIENT_PERMISSIONS: you do not have the required permissions to perform this action
 `,
                 example: "NOT_FOUND",
               }),
@@ -131,37 +139,45 @@ Possible values are:
 });
 
 export type LegacyKeysVerifyKeyRequest = z.infer<
-  typeof route.request.body.content["application/json"]["schema"]
+  (typeof route.request.body.content)["application/json"]["schema"]
 >;
 export type LegacyKeysVerifyKeyResponse = z.infer<
-  typeof route.responses[200]["content"]["application/json"]["schema"]
+  (typeof route.responses)[200]["content"]["application/json"]["schema"]
 >;
 
 export const registerLegacyKeysVerifyKey = (app: App) =>
   app.openapi(route, async (c) => {
     const { apiId, key } = c.req.valid("json");
+    const { keyService } = c.get("services");
 
-    const { value, error } = await keyService.verifyKey(c, { key, apiId });
-    if (error) {
-      throw new UnkeyApiError({ code: "INTERNAL_SERVER_ERROR", message: error.message });
+    const { val, err } = await keyService.verifyKey(c, { key, apiId });
+    if (err) {
+      throw new UnkeyApiError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: err.message,
+      });
     }
 
-    if (!value.valid) {
+    if (!val.valid) {
+      if (val.code === "NOT_FOUND") {
+        c.status(404);
+      }
+
       return c.json({
         valid: false,
-        code: value.code,
-        rateLimit: value.ratelimit,
-        remaining: value.remaining,
+        code: val.code,
+        rateLimit: val.ratelimit,
+        remaining: val.remaining,
       });
     }
 
     return c.json({
-      keyId: value.key.id,
+      keyId: val.key.id,
       valid: true,
-      ownerId: value.key?.ownerId,
-      meta: value.key?.meta,
-      expires: value.key?.expires?.getTime(),
-      remaining: value.remaining,
-      ratelimit: value.ratelimit,
+      ownerId: val.key.ownerId ?? undefined,
+      meta: val.key.meta ? JSON.parse(val.key.meta) : undefined,
+      expires: val.key.expires?.getTime(),
+      remaining: val.remaining ?? undefined,
+      ratelimit: val.ratelimit ?? undefined,
     });
   });

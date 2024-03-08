@@ -1,13 +1,13 @@
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Separator } from "@/components/ui/separator";
-import { getTenantId } from "@/lib/auth";
-import { QUOTA } from "@/lib/constants/quotas";
-import { db, eq, schema } from "@/lib/db";
+import { db, schema } from "@/lib/db";
+import { ingestAuditLogs } from "@/lib/tinybird";
 import { auth } from "@clerk/nextjs";
 import { newId } from "@unkey/id";
 import { ArrowRight } from "lucide-react";
+import { headers } from "next/headers";
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { CreateApi } from "./create-api";
 import { CreateWorkspace } from "./create-workspace";
 import { Keys } from "./keys";
@@ -20,10 +20,15 @@ type Props = {
 };
 
 export default async function (props: Props) {
-  const _tenantId = getTenantId();
   const { userId } = auth();
 
   if (props.searchParams.apiId) {
+    const api = await db.query.apis.findFirst({
+      where: (table, { eq }) => eq(table.id, props.searchParams.apiId!),
+    });
+    if (!api) {
+      return notFound();
+    }
     return (
       <div className="container m-16 mx-auto">
         <PageHeader
@@ -33,22 +38,23 @@ export default async function (props: Props) {
             <Link
               key="skip"
               href="/app"
-              className="text-content-subtle hover:text-foreground flex items-center gap-1 text-sm duration-200"
+              className="flex items-center gap-1 text-sm duration-200 text-content-subtle hover:text-foreground"
             >
-              Skip <ArrowRight className="h-4 w-4" />{" "}
+              Skip <ArrowRight className="w-4 h-4" />{" "}
             </Link>,
           ]}
         />
 
         <Separator className="my-6" />
 
-        <Keys apiId={props.searchParams.apiId} />
+        <Keys keyAuthId={api.keyAuthId!} apiId={api.id} />
       </div>
     );
   }
   if (props.searchParams.workspaceId) {
     const workspace = await db.query.workspaces.findFirst({
-      where: eq(schema.workspaces.id, props.searchParams.workspaceId),
+      where: (table, { and, eq, isNull }) =>
+        and(eq(table.id, props.searchParams.workspaceId!), isNull(table.deletedAt)),
     });
     if (!workspace) {
       return redirect("/new");
@@ -62,9 +68,9 @@ export default async function (props: Props) {
             <Link
               key="skip"
               href="/app"
-              className="text-content-subtle hover:text-foreground flex items-center gap-1 text-sm duration-200"
+              className="flex items-center gap-1 text-sm duration-200 text-content-subtle hover:text-foreground"
             >
-              Skip <ArrowRight className="h-4 w-4" />{" "}
+              Skip <ArrowRight className="w-4 h-4" />{" "}
             </Link>,
           ]}
         />
@@ -76,7 +82,8 @@ export default async function (props: Props) {
 
   if (userId) {
     const personalWorkspace = await db.query.workspaces.findFirst({
-      where: eq(schema.workspaces.tenantId, userId),
+      where: (table, { and, eq, isNull }) =>
+        and(eq(table.tenantId, userId), isNull(table.deletedAt)),
     });
 
     // if no personal workspace exists, we create one
@@ -84,23 +91,37 @@ export default async function (props: Props) {
       const workspaceId = newId("workspace");
       await db.insert(schema.workspaces).values({
         id: workspaceId,
-        slug: null,
         tenantId: userId,
         name: "Personal",
         plan: "free",
         stripeCustomerId: null,
         stripeSubscriptionId: null,
-        maxActiveKeys: QUOTA.free.maxActiveKeys,
-        maxVerifications: QUOTA.free.maxVerifications,
-        usageActiveKeys: null,
-        usageVerifications: null,
-        lastUsageUpdate: null,
-        billingPeriodStart: null,
-        billingPeriodEnd: null,
         features: {},
         betaFeatures: {},
         subscriptions: null,
+        createdAt: new Date(),
       });
+      await ingestAuditLogs({
+        workspaceId: workspaceId,
+        event: "workspace.create",
+        actor: {
+          type: "user",
+          id: userId,
+        },
+        description: `Created ${workspaceId}`,
+        resources: [
+          {
+            type: "workspace",
+            id: workspaceId,
+          },
+        ],
+
+        context: {
+          userAgent: headers().get("user-agent") ?? undefined,
+          location: headers().get("x-forwarded-for") ?? process.env.VERCEL_REGION ?? "unknown",
+        },
+      });
+
       return redirect(`/new?workspaceId=${workspaceId}`);
     }
   }

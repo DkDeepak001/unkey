@@ -1,11 +1,16 @@
+import { Err, Ok, Result } from "@unkey/error";
 import { type Context } from "hono";
-import { type Cache } from "./interface";
+import { type Cache, CacheError } from "./interface";
+import type { CacheNamespaces } from "./namespaces";
 
 /**
  * TieredCache is a cache that will first check the memory cache, then the zone cache.
  */
-export class TieredCache<TNamespaces extends Record<string, unknown>> implements Cache<TNamespaces> {
+export class TieredCache<TNamespaces extends Record<string, unknown> = CacheNamespaces>
+  implements Cache<TNamespaces>
+{
   private readonly tiers: Cache<TNamespaces>[];
+  public readonly tier = "tiered";
 
   /**
    * Create a new tiered cache
@@ -25,21 +30,25 @@ export class TieredCache<TNamespaces extends Record<string, unknown>> implements
     c: Context,
     namespace: TName,
     key: string,
-  ): Promise<[TNamespaces[TName] | undefined, boolean]> {
+  ): Promise<Result<[TNamespaces[TName] | undefined, boolean], CacheError>> {
     if (this.tiers.length === 0) {
-      return [undefined, false];
+      return Ok([undefined, false]);
     }
 
     for (let i = 0; i < this.tiers.length; i++) {
-      const [cached, stale] = await this.tiers[i].get<TName>(c, namespace, key);
+      const res = await this.tiers[i].get<TName>(c, namespace, key);
+      if (res.err) {
+        return res;
+      }
+      const [cached, stale] = res.val;
       if (typeof cached !== "undefined") {
         for (let j = 0; j < i; j++) {
-          this.tiers[j].set(c, namespace, key, cached);
+          await this.tiers[j].set(c, namespace, key, cached);
         }
-        return [cached, stale];
+        return Ok([cached, stale]);
       }
     }
-    return [undefined, false];
+    return Ok([undefined, false]);
   }
 
   /**
@@ -50,8 +59,18 @@ export class TieredCache<TNamespaces extends Record<string, unknown>> implements
     namespace: TName,
     key: string,
     value: TNamespaces[TName],
-  ): Promise<void> {
-    await Promise.all(this.tiers.map((t) => t.set<TName>(c, namespace, key, value)));
+  ): Promise<Result<void, CacheError>> {
+    return Promise.all(this.tiers.map((t) => t.set<TName>(c, namespace, key, value)))
+      .then(() => Ok())
+      .catch((err) =>
+        Err(
+          new CacheError({
+            namespace: namespace as keyof CacheNamespaces,
+            key,
+            message: (err as Error).message,
+          }),
+        ),
+      );
   }
 
   /**
@@ -61,33 +80,56 @@ export class TieredCache<TNamespaces extends Record<string, unknown>> implements
     c: Context,
     namespace: TName,
     key: string,
-  ): Promise<void> {
-    await Promise.all(this.tiers.map((t) => t.remove(c, namespace, key)));
+  ): Promise<Result<void, CacheError>> {
+    return Promise.all(this.tiers.map((t) => t.remove(c, namespace, key)))
+      .then(() => Ok())
+      .catch((err) =>
+        Err(
+          new CacheError({
+            namespace: namespace as keyof CacheNamespaces,
+            key,
+            message: (err as Error).message,
+          }),
+        ),
+      );
   }
 
   public async withCache<TName extends keyof TNamespaces>(
     c: Context,
     namespace: TName,
     key: string,
-    loadFromDatabase: (key: string) => Promise<TNamespaces[TName]>,
-  ): Promise<TNamespaces[TName]> {
-    const [cached, stale] = await this.get<TName>(c, namespace, key);
+    loadFromOrigin: (key: string) => Promise<TNamespaces[TName]>,
+  ): Promise<Result<TNamespaces[TName], CacheError>> {
+    const res = await this.get<TName>(c, namespace, key);
+    if (res.err) {
+      return Err(res.err);
+    }
+    const [cached, stale] = res.val;
     if (typeof cached !== "undefined") {
       if (stale) {
         c.executionCtx.waitUntil(
-          loadFromDatabase(key)
+          loadFromOrigin(key)
             .then((value) => this.set(c, namespace, key, value))
             .catch((err) => {
               console.error(err);
             }),
         );
       }
-      return cached;
+      return Ok(cached);
     }
 
-    const value = await loadFromDatabase(key);
-    this.set(c, namespace, key, value);
-
-    return value;
+    try {
+      const value = await loadFromOrigin(key);
+      await this.set(c, namespace, key, value);
+      return Ok(value);
+    } catch (err) {
+      return Err(
+        new CacheError({
+          namespace: namespace as keyof CacheNamespaces,
+          key,
+          message: (err as Error).message,
+        }),
+      );
+    }
   }
 }

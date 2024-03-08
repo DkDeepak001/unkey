@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/card";
 import { Code } from "@/components/ui/code";
 import { Separator } from "@/components/ui/separator";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "@/components/ui/toaster";
 import { trpc } from "@/lib/trpc/client";
 import { AlertCircle, KeyRound, Lock } from "lucide-react";
 import Link from "next/link";
@@ -41,10 +41,10 @@ type Steps =
 
 type Props = {
   apiId: string;
+  keyAuthId: string;
 };
 
-export const Keys: React.FC<Props> = ({ apiId }) => {
-  const { toast } = useToast();
+export const Keys: React.FC<Props> = ({ keyAuthId, apiId }) => {
   const [step, setStep] = useState<Steps>({ step: "CREATE_ROOT_KEY" });
   const rootKey = trpc.key.createInternalRootKey.useMutation({
     onSuccess(res) {
@@ -52,11 +52,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
     },
     onError(err) {
       console.error(err);
-      toast({
-        title: "Error",
-        description: err.message,
-        variant: "alert",
-      });
+      toast.error(err.message);
     },
   });
   const key = trpc.key.create.useMutation({
@@ -65,11 +61,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
     },
     onError(err) {
       console.error(err);
-      toast({
-        title: "Error",
-        description: err.message,
-        variant: "alert",
-      });
+      toast.error(err.message);
     },
   });
 
@@ -78,7 +70,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
 
   const createKeySnippet = `curl -XPOST '${
     process.env.NEXT_PUBLIC_UNKEY_API_URL ?? "https://api.unkey.dev"
-  }/v1/keys' \\
+  }/v1/keys.createKey' \\
   -H 'Authorization: Bearer ${rootKey.data?.key}' \\
   -H 'Content-Type: application/json' \\
   -d '{
@@ -88,7 +80,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
 
   const verifyKeySnippet = `curl -XPOST '${
     process.env.NEXT_PUBLIC_UNKEY_API_URL ?? "https://api.unkey.dev"
-  }/v1/keys/verify' \\
+  }/v1/keys.verifyKey' \\
   -H 'Content-Type: application/json' \\
   -d '{
     "key": "${key.data?.key ?? "<YOUR_KEY>"}"
@@ -109,21 +101,21 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
     return (
       <div>
         <div className="space-y-2">
-          <div className="bg-primary/5 inline-flex items-center justify-center rounded-full border p-4">
-            <Lock className="text-primary h-6 w-6" />
+          <div className="inline-flex items-center justify-center p-4 border rounded-full bg-primary/5">
+            <Lock className="w-6 h-6 text-primary" />
           </div>
           <h4 className="text-lg font-medium">Root Keys</h4>
-          <p className="text-content-subtle text-sm">
+          <p className="text-sm text-content-subtle">
             Root keys create resources such as keys or APIs on Unkey. You should never give this to
             your users.
           </p>
         </div>
-        <div className="space-y-2 max-sm:mt-4">
-          <div className="bg-primary/5 inline-flex items-center justify-center rounded-full border p-4">
-            <KeyRound className="text-primary h-6 w-6" />
+        <div className="space-y-2 max-sm:mt-4 md:mt-8">
+          <div className="inline-flex items-center justify-center p-4 border rounded-full bg-primary/5">
+            <KeyRound className="w-6 h-6 text-primary" />
           </div>
           <h4 className="text-lg font-medium">Regular Keys</h4>
-          <p className="text-content-subtle text-sm">
+          <p className="text-sm text-content-subtle">
             Regular API keys are used to authenticate your users. You can use your root key to
             create regular API keys and give them to your users.
           </p>
@@ -134,7 +126,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
   return (
     <div className="flex items-start justify-between gap-16 ">
       <main className="max-sm:w-full md:w-3/4">
-        <aside className="mb-4 w-full md:hidden">
+        <aside className="w-full mb-4 md:hidden">
           <AsideContent />
         </aside>
         {step.step === "CREATE_ROOT_KEY" ? (
@@ -143,7 +135,10 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
               Let's begin by creating a root key
             </EmptyPlaceholder.Description>
 
-            <Button disabled={rootKey.isLoading} onClick={() => rootKey.mutate()}>
+            <Button
+              disabled={rootKey.isLoading}
+              onClick={() => rootKey.mutate({ permissions: ["*"] })}
+            >
               {rootKey.isLoading ? <Loading /> : "Create Root Key"}
             </Button>
           </EmptyPlaceholder>
@@ -153,7 +148,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
               <CardTitle className="mb-4">Your root key</CardTitle>
               <CardDescription>
                 <Alert>
-                  <AlertCircle className="h-4 w-4" />
+                  <AlertCircle className="w-4 h-4" />
                   <AlertTitle>This key is only shown once and can not be recovered </AlertTitle>
                   <AlertDescription>
                     Please store it somewhere safe for future use.
@@ -164,7 +159,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
             <CardContent>
               <Code className="my-8 flex w-full items-center justify-between gap-4 max-sm:overflow-hidden max-sm:text-[9px]">
                 {showKey ? step.rootKey : maskKey(step.rootKey)}
-                <div className="flex items-start justify-between max-sm:absolute max-sm:right-16  md:gap-4">
+                <div className="flex items-start justify-between max-sm:absolute max-sm:right-16 md:gap-4">
                   <VisibleButton isVisible={showKey} setIsVisible={setShowKey} />
                   <CopyButton value={step.rootKey} />
                 </div>
@@ -176,7 +171,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
               <p className="mt-2 text-gray-500">
                 Use your new root key to create a new API key for your users:
               </p>
-              <Code className="my-8 flex w-full items-start justify-between md:gap-4 ">
+              <Code className="flex items-start justify-between w-full my-8 md:gap-4 ">
                 <div className=" mt-10 overflow-hidden max-sm:text-[8px] md:text-xs">
                   {showKeyInSnippet
                     ? createKeySnippet
@@ -193,7 +188,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
                 size="sm"
                 variant="link"
                 disabled={key.isLoading}
-                onClick={() => key.mutate({ apiId })}
+                onClick={() => key.mutate({ keyAuthId })}
               >
                 {key.isLoading ? <Loading /> : "Or click here to create a key"}
               </Button>
@@ -233,7 +228,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
                       : verifyKeySnippet.replace(step.key, maskKey(step.key))
                     : verifyKeySnippet}
                 </div>
-                <div className="flex items-start justify-between gap-4  max-sm:absolute max-sm:right-16">
+                <div className="flex items-start justify-between gap-4 max-sm:absolute max-sm:right-16">
                   {step.key ? (
                     <VisibleButton
                       isVisible={showKeyInSnippet}
@@ -257,7 +252,7 @@ export const Keys: React.FC<Props> = ({ apiId }) => {
           </Card>
         ) : null}
       </main>
-      <aside className="w-1/4 flex-col items-start justify-center space-y-16 max-md:hidden md:flex ">
+      <aside className="flex-col items-start justify-center w-1/4 space-y-16 max-md:hidden md:flex ">
         <AsideContent />
       </aside>
     </div>

@@ -2,10 +2,10 @@ import { Container } from "@/components/landing/container";
 import { FadeIn } from "@/components/landing/fade-in";
 import { PageIntro } from "@/components/landing/page-intro";
 import { PageLinks } from "@/components/landing/page-links";
-import { allChangelogs } from "contentlayer/generated";
-import { getMDXComponent } from "next-contentlayer/hooks";
 import { notFound } from "next/navigation";
 
+import { MdxContent } from "@/components/landing/mdx-content";
+import { CHANGELOG_PATH, getChangelog, getContentData, getFilePaths } from "@/lib/mdx-helper";
 import type { Metadata } from "next";
 
 type Props = {
@@ -13,75 +13,98 @@ type Props = {
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  // read route params
-  const changelog = allChangelogs.find(
-    (c) => new Date(c.date).toISOString().split("T")[0] === params.date,
-  );
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : "http://localhost:3000";
+  const { frontmatter } = await getChangelog(params.date);
+
+  if (!frontmatter) {
+    return notFound();
+  }
+
+  const baseUrl = process.env.VERCEL_URL ? "https://unkey.dev" : "http://localhost:3000";
+  const ogUrl = new URL("/og/changelog", baseUrl);
+
+  ogUrl.searchParams.set("title", frontmatter.title ?? "");
+  ogUrl.searchParams.set("date", params.date ?? "");
 
   return {
-    title: `${changelog?.title} | Unkey`,
-    description: changelog?.description,
+    title: `${frontmatter?.title} | Unkey`,
+    description: frontmatter?.description,
     openGraph: {
-      title: `${changelog?.title} | Unkey`,
-      description: changelog?.description,
-      url: `${baseUrl}/changelog/${changelog?.url}`,
+      title: `${frontmatter?.title} | Unkey`,
+      description: frontmatter?.description,
+      url: `https://unkey.dev/changelog/${params.date}?title=${encodeURIComponent(
+        frontmatter?.title,
+      )}`,
       siteName: "unkey.dev",
       images: [
         {
-          url: `${baseUrl}/og/changelog?title=${changelog?.title}&date=${changelog?.date}`,
+          url: ogUrl.toString(),
           width: 1200,
-          height: 675,
+          height: 630,
+          alt: frontmatter.title,
         },
       ],
     },
     twitter: {
-      title: `${changelog?.title} | Unkey`,
       card: "summary_large_image",
+      title: `${frontmatter?.title} | Unkey`,
+      description: frontmatter?.description,
+      site: "@unkeydev",
+      creator: "@unkeydev",
+      images: [
+        {
+          url: ogUrl.toString(),
+          width: 1200,
+          height: 630,
+          alt: frontmatter.title,
+        },
+      ],
     },
     icons: {
-      shortcut: "/unkey.png",
+      shortcut: "/images/landing/unkey.png",
     },
   };
 }
 
-export const generateStaticParams = async () =>
-  allChangelogs.map((c) => ({
-    date: new Date(c.date).toISOString().split("T")[0],
-  }));
+export const generateStaticParams = async () => {
+  const changelogs = await getFilePaths(CHANGELOG_PATH);
+  // Remove file extensions for page paths
+  changelogs.map((path) => path.replace(/\.mdx?$/, "")).map((date) => ({ params: { date } }));
+  return changelogs;
+};
 
 export default async function ChangeLogLayout({
   params,
 }: {
   params: { date: string };
 }) {
-  const changelog = allChangelogs.find(
-    (c) => new Date(c.date).toISOString().split("T")[0] === params.date,
-  );
+  const { frontmatter, serialized } = await getChangelog(params.date);
 
-  if (!changelog?.body) {
+  if (!serialized) {
     return notFound();
   }
 
-  const Content = getMDXComponent(changelog.body.code);
-
-  const moreChangelogs = allChangelogs.filter((p) => p.date !== params.date).slice(0, 2);
+  const moreChangelogs = await getContentData({
+    contentPath: CHANGELOG_PATH,
+    filepath: params.date,
+  });
 
   return (
     <>
       <article className="mt-24 sm:mt-32 lg:mt-40">
         <header>
-          <PageIntro eyebrow={changelog.date} title={changelog.title} centered>
-            <p>{changelog.description}</p>
+          <PageIntro
+            eyebrow={new Date(frontmatter.date).toDateString()}
+            title={frontmatter.title}
+            centered
+          >
+            <p>{frontmatter.description}</p>
           </PageIntro>
         </header>
 
         <Container className="mt-24 sm:mt-32 lg:mt-40">
           <FadeIn>
-            <div className="prose lg:prose-md mx-auto max-w-5xl">
-              <Content />
+            <div className="prose lg:prose-md prose-neutral dark:prose-invert prose-pre:border prose-pre:border-border prose-pre:rounded-lg prose-img:rounded-lg prose-img:border prose-img:border-border mx-auto max-w-5xl ">
+              <MdxContent source={serialized} />
             </div>
           </FadeIn>
         </Container>
@@ -92,6 +115,7 @@ export default async function ChangeLogLayout({
           className="mt-24 sm:mt-32 lg:mt-40"
           title="Read more changelogs"
           pages={moreChangelogs}
+          contentType="changelog"
         />
       )}
     </>

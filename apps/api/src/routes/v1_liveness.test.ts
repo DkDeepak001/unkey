@@ -1,25 +1,37 @@
-import { newApp } from "@/pkg/hono/app";
-import { expect, test } from "bun:test";
+import { RouteHarness } from "@/pkg/testutil/route-harness";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "vitest";
+import { V1LivenessResponse } from "./v1_liveness";
 
-import { init } from "@/pkg/global";
-import { unitTestEnv } from "@/pkg/testutil/env";
-import { fetchRoute } from "@/pkg/testutil/request";
-import { V1LivenessResponse, registerV1Liveness } from "./v1_liveness";
-
-test("returns 200", async () => {
-  const env = unitTestEnv.parse(process.env);
-  // @ts-ignore
-  init({ env });
-
-  const app = newApp();
-  registerV1Liveness(app);
-  const res = await fetchRoute<never, V1LivenessResponse>(app, {
-    method: "GET",
+let h: RouteHarness;
+beforeAll(async () => {
+  h = await RouteHarness.init();
+});
+beforeEach(async () => {
+  await h.seed();
+});
+afterEach(async () => {
+  await h.teardown();
+});
+afterAll(async () => {
+  await h.stop();
+});
+test("confirms services", async () => {
+  const res = await h.get<V1LivenessResponse>({
     url: "/v1/liveness",
   });
 
-  expect(res.status).toEqual(200);
-  expect(res.body.status).toEqual("we're cooking");
-  expect(res.body.services.metrics).toEqual("NoopMetrics");
-  expect(res.body.services.logger).toEqual("ConsoleLogger");
+  console.log(res);
+  expect(res).toMatchObject({
+    status: 200,
+    body: {
+      status: "we're so back",
+      services: {
+        metrics: "NoopMetrics",
+        logger: "ConsoleLogger",
+        ratelimit: "DurableRateLimiter",
+        usagelimit: "DurableUsageLimiter",
+        analytics: "NoopTinybird",
+      },
+    },
+  });
 });

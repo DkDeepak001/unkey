@@ -1,108 +1,125 @@
 import { Container } from "@/components/landing/container";
 import { FadeIn } from "@/components/landing/fade-in";
+import { MdxContent } from "@/components/landing/mdx-content";
 import { PageLinks } from "@/components/landing/page-links";
 import { Avatar, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { allPosts } from "contentlayer/generated";
+import { authors } from "@/content/blog/authors";
 import type { Metadata } from "next";
-import { useMDXComponent } from "next-contentlayer/hooks";
+
 import Link from "next/link";
 import { notFound } from "next/navigation";
+
+import { BLOG_PATH, getContentData, getFilePaths, getPost } from "@/lib/mdx-helper";
+
 type Props = {
-  params: { slug: string };
+  params: { slug: string; title: string; description: string; authorName: string };
   searchParams: { [key: string]: string | string[] | undefined };
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   // read route params
-  const post = allPosts.find((post) => post._raw.flattenedPath === `blog/${params.slug}`);
+  const { frontmatter } = await getPost(params.slug);
 
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : "http://localhost:3000";
+  if (!frontmatter) {
+    return notFound();
+  }
+
+  const baseUrl = process.env.VERCEL_URL ? "https://unkey.dev" : "http://localhost:3000";
   const ogUrl = new URL("/og/blog", baseUrl);
-  ogUrl.searchParams.set("title", post?.title ?? "");
-  ogUrl.searchParams.set("author", post?.author.name ?? "");
-  if (post?.author.image?.src) {
-    ogUrl.searchParams.set("image", new URL(post?.author.image.src, baseUrl).toString());
+  const author = authors[frontmatter.author];
+  ogUrl.searchParams.set("title", frontmatter.title ?? "");
+  ogUrl.searchParams.set("author", author.name ?? "");
+  if (author.image.src) {
+    ogUrl.searchParams.set("image", new URL(author.image.src, baseUrl).toString());
   }
 
   return {
-    title: `${post?.title} | Unkey`,
-    description: post?.description,
+    title: `${frontmatter.title} | Unkey`,
+    description: frontmatter.description,
     openGraph: {
-      title: `${post?.title} | Unkey`,
-      description: post?.description,
+      title: `${frontmatter.title} | Unkey`,
+      description: frontmatter.description,
       url: `https://unkey.dev/blog/${params.slug}`,
-      siteName: "unkey.dev",
+      type: "article",
       images: [
         {
-          url: post?.image || ogUrl.toString(),
+          url: ogUrl.toString(),
           width: 1200,
-          height: 675,
+          height: 630,
+          alt: frontmatter.title,
         },
       ],
+      siteName: "unkey.dev",
     },
     twitter: {
-      title: `${post?.title} | Unkey`,
       card: "summary_large_image",
+      title: `${frontmatter.title} | Unkey`,
+      description: frontmatter.description,
+      images: [
+        {
+          url: ogUrl.toString(),
+          width: 1200,
+          height: 630,
+          alt: frontmatter.title,
+        },
+      ],
+      site: "@unkeydev",
+      creator: "@unkeydev",
     },
     icons: {
-      shortcut: "/unkey.png",
+      shortcut: "/images/landing/unkey.png",
     },
   };
 }
 
-export const generateStaticParams = async () =>
-  allPosts.map((post) => ({ slug: post._raw.flattenedPath }));
+export const generateStaticParams = async () => {
+  const posts = await getFilePaths(BLOG_PATH);
+  // Remove file extensions for page paths
+  posts.map((path) => path.replace(/\.mdx?$/, "")).map((slug) => ({ params: { slug } }));
+  return posts;
+};
 
-const BlogArticleWrapper = ({ params }: { params: { slug: string } }) => {
-  const post = allPosts.find((post) => post._raw.flattenedPath === `blog/${params.slug}`);
-  if (!post) {
-    return notFound();
-  }
+const BlogArticleWrapper = async ({ params }: { params: { slug: string } }) => {
+  const { serialized, frontmatter, headings } = await getPost(params.slug);
 
-  const Content = useMDXComponent(post.body.code);
+  const author = authors[frontmatter.author];
+  const moreArticles = await getContentData({
+    contentPath: BLOG_PATH,
+    filepath: params.slug,
+  });
 
-  // Find other articles to recommend at the bottom of the page that aren't the current article
-  const moreArticles = allPosts
-    .filter((p) => p._raw.flattenedPath !== post._raw.flattenedPath)
-    .slice(0, 2);
   return (
     <>
       <Container className="scroll-smooth">
         <div className="relative mt-16 flex flex-col items-start space-y-8 lg:mt-32 lg:flex-row lg:space-y-0 ">
           <div className="mx-auto w-full lg:pl-8 ">
             <h2 className="text-center text-3xl font-bold tracking-tight text-gray-900 sm:text-6xl">
-              {post.title}
+              {frontmatter.title}
             </h2>
-            <p className="border- my-8 text-center text-gray-500">{post.description}</p>
+            <p className="border- my-8 text-center text-gray-500">{frontmatter.description}</p>
             <div className="prose prose-neutral dark:prose-invert prose-pre:border prose-pre:border-border prose-pre:rounded-lg prose-img:rounded-lg prose-img:border prose-img:border-border mx-auto w-full">
-              <Content />
+              <MdxContent source={serialized} />
             </div>
           </div>
 
           <div className="top-24 flex h-max w-full flex-col justify-end self-start px-4 sm:px-6 lg:sticky lg:w-2/5 lg:px-8">
             <div className="mx-auto flex items-center justify-start gap-4 border-y-0 p-2 md:mx-0 md:border-b md:border-b-gray-200">
               <Avatar className="h-14 w-14 justify-items-start">
-                <AvatarImage src={post.author.image?.src} alt={post.author.name} />
+                <AvatarImage src={author.image?.src} alt={author.name} />
               </Avatar>
               <div className="text-sm text-gray-950">
-                <div className="font-semibold">{post.author.name}</div>
+                <div className="font-semibold">{author.name}</div>
               </div>
             </div>
-            <div className="hidden md:block">
-              <h3 className="mb-4 mt-8 text-lg font-bold uppercase tracking-wide text-gray-600">
-                Table of Contents
-              </h3>
-              <ScrollArea className="flex h-[580px] flex-col">
-                <div className="p-4">
-                  {post.headings.map(
-                    (heading: {
-                      slug: string;
-                      level: string;
-                      text: string;
-                    }) => {
+            {
+              <div className="hidden md:block">
+                <h3 className="mb-4 mt-8 text-lg font-bold uppercase tracking-wide text-gray-600">
+                  Table of Contents
+                </h3>
+                <ScrollArea className="flex h-[580px] flex-col">
+                  <div className="p-4">
+                    {headings.map((heading) => {
                       return (
                         <div key={`#${heading.slug}`} className="my-2">
                           <a
@@ -118,12 +135,12 @@ const BlogArticleWrapper = ({ params }: { params: { slug: string } }) => {
                           </a>
                         </div>
                       );
-                    },
-                  )}
-                </div>
-                <ScrollBar orientation="vertical" />
-              </ScrollArea>
-            </div>
+                    })}
+                  </div>
+                  <ScrollBar orientation="vertical" />
+                </ScrollArea>
+              </div>
+            }
           </div>
         </div>
       </Container>
@@ -189,6 +206,7 @@ const BlogArticleWrapper = ({ params }: { params: { slug: string } }) => {
           className="mt-24 sm:mt-32 lg:mt-40"
           title="More articles"
           intro=""
+          contentType="blog"
           pages={moreArticles}
         />
       )}

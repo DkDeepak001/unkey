@@ -4,11 +4,12 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { PostHogIdentify } from "@/providers/PostHogProvider";
+import { useUser } from "@clerk/nextjs";
 import { BookOpen, Code, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { CreateApiButton } from "./create-api-button";
-
 type ApiWithKeys = {
   id: string;
   name: string;
@@ -18,12 +19,16 @@ type ApiWithKeys = {
 }[];
 
 export function ApiList({ apis }: { apis: ApiWithKeys }) {
+  const { user, isLoaded } = useUser();
   useEffect(() => {
     if (apis.length) {
       setLocalData(apis);
     }
   }, [apis]);
   const [localData, setLocalData] = useState(apis);
+  if (isLoaded && user) {
+    PostHogIdentify({ user });
+  }
   return (
     <div>
       <PageHeader title="Applications" description="Manage your APIs" />
@@ -50,10 +55,8 @@ export function ApiList({ apis }: { apis: ApiWithKeys }) {
             <Link key={api.id} href={`/app/apis/${api.id}`}>
               <Card className="hover:border-primary/50 group relative overflow-hidden duration-500 ">
                 <CardHeader>
-                  <div className="flex items-center justify-between ">
-                    <CardTitle className="whitespace-nowrap overflow-hidden text-ellipsis">
-                      {api.name}
-                    </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="truncate">{api.name}</CardTitle>
                   </div>
                   <CardDescription>{api.id}</CardDescription>
                 </CardHeader>

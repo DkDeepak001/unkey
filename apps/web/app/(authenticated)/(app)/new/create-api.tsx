@@ -12,14 +12,15 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "@/components/ui/toaster";
 import { trpc } from "@/lib/trpc/client";
+import { PostHogIdentify } from "@/providers/PostHogProvider";
+import { useUser } from "@clerk/nextjs";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Code2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-
 const formSchema = z.object({
   name: z.string().min(3, "Name is required and should be at least 3 characters").max(50),
 });
@@ -35,23 +36,20 @@ export const CreateApi: React.FC<Props> = ({ workspace }) => {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
   });
+  const { user, isLoaded } = useUser();
   const router = useRouter();
-  const { toast } = useToast();
+
+  if (isLoaded && user) {
+    PostHogIdentify({ user });
+  }
   const createApi = trpc.api.create.useMutation({
     onSuccess: async ({ id: apiId }) => {
-      toast({
-        title: "API Created",
-        description: "Your API has been created",
-      });
+      toast.success("Your API has been created");
 
       router.push(`/new?workspaceId=${workspace.id}&apiId=${apiId}`);
     },
     onError(err) {
-      toast({
-        title: "Error",
-        description: `An error occured while creating your api: ${err.message}`,
-        variant: "alert",
-      });
+      toast.error(err.message);
     },
   });
   function AsideContent() {
